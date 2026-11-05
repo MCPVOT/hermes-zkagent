@@ -1,0 +1,22 @@
+name: check
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # No zkagent binary and no hermes CLI on the runner, so check.py skips the smoke
+      # run and the hermes gates and still enforces the four that protect the tree:
+      # secrets, bundled binaries, manifest/code agreement, docs.
+      # No untrusted event input is interpolated into any run step.
+      - name: repository gates
+        run: python3 scripts/check.py --no-binary

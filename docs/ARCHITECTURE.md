@@ -10,13 +10,13 @@ Hermes tool call
       │
       ├─ post_tool_call(tool_name, args, result, task_id)
       │        │  sha256(canonical args) -> 64-bit digest      (args are not stored)
-      │        │  cost table -> amount                          (state.json: costs)
-      │        │  tool name -> target id                        (state.json: targets)
+      │        │  cost table -> amount                          (state.json: costs, cached)
+      │        │  tool name -> target id                        (state.json: targets, cached)
       │        ▼
-      │   state.json  { pending: [action...], runs: [...], targets, costs, next_run_id }
+      │   pending.jsonl  one compact JSON row appended per call
       │
       └─ zkagent_attest { max_amount, ttl_seconds }
-               │  batch = oldest 8 pending
+               │  batch = oldest 8 pending rows
                │  refuse if total > max_amount or any amount > max_per_action
                │
                ├─ zkagent setup         keys/ (once; vk.bin + pk.bin, dir mode 700)
@@ -24,7 +24,8 @@ Hermes tool call
                ├─ write receipt.json    totals + execution_id + zero trace_root
                ├─ write actions.json    the private witness: target, amount, digest
                ├─ zkagent prove         proof.json, and receipt.json gains the real trace_root
-               └─ zkagent verify --json verdict { accept | reject, reason_code }
+               ├─ zkagent verify --json verdict { accept | reject, reason_code }
+               └─ compact pending.jsonl to the rows beyond the batch
 ```
 
 `zkagent_verify` re-runs the last step on stored artifacts. `zkagent_disclose` reveals one
@@ -34,14 +35,41 @@ slot's digest plus the three sibling hashes on its path to the root, and nothing
 
 ```
 plugin-data/zkagent-attest/
-  state.json          ledger, cost table, target map, run history
+  state.json          session header: cost table, target map, run history
+  pending.jsonl       the ledger: one compact JSON row per tool call, append-only
   authority.hex       policy signing key, mode 600, created once
   keys/               circuit-specific proving/verifying keys, mode 700
   runs/run-<id>/      policy.json, receipt.json, actions.json, proof.json, disclosure-<i>.json
 ```
 
 Nothing else is written. The plugin's own install directory is never used for state, so
-`hermes plugins update` cannot lose it.
+`hermes plugins update` cannot lose it. `state.json` is the header of the session: if it is
+gone, the log beside it is not a ledger, which is what keeps "clear `state.json` to start
+fresh" true.
+
+## The cost of the hook
+
+`post_tool_call` runs synchronously on every tool call the agent makes, so its per-call cost
+is latency on the user's critical path. Two rules keep it small:
+
+- the hook **appends** one line; it never reads or rewrites the ledger. `state.json` changes
+  only when the cost table, the target map or the run history changes — i.e. once for the
+  header and at most once per tool name — and the cost table and target map are cached
+  against its `(mtime, size, inode)` signature rather than re-read.
+- the digest is computed once, from one serialisation of the arguments. It cannot be cached
+  and it does not shrink: `sha256` over a 200 KB payload is ~0.8 ms on its own, and that is
+  the floor for a large call.
+
+Measured on this laptop with `python3 scripts/bench.py --repeat 7` (200 calls, median):
+
+| argument payload | before | after |
+|---|---|---|
+| 200 B | 0.97 ms/call | 0.050 ms/call |
+| 200 KB | 2.00 ms/call | 0.86 ms/call |
+
+Disk after 200 calls: 28.2 KiB in one file before, 18.5 KiB split across `state.json` and
+`pending.jsonl` after. Re-measure rather than trusting the table; a loaded machine moves a
+single run by tens of percent.
 
 ## Why the receipt is generated here
 
@@ -65,9 +93,11 @@ it in Python would duplicate the MiMC tree for no benefit.
 
 ## What is deliberately absent
 
-- No daemon, no queue, no background thread. State is a JSON file rewritten atomically.
-- No database. The ledger is append-in-memory and rewritten; sessions are small by design
-  (8 actions per receipt).
+- No daemon, no queue, no background thread, no timer flush. A write to the ledger is one
+  `O_APPEND` write per call, so a crash or a reloaded module loses at most a torn last line,
+  and a flush that has not happened yet can never hide a recorded action.
+- No database. The ledger is an append-only log, compacted at attest time, because the
+  session is small by design (8 actions per receipt) and a reviewer can read it with `tail`.
 - No cache of the binary's version beyond a call to `zkagent version` on status.
 - No Windows-specific path handling: `plugin_data_dir()` resolves the profile home, so the
   same code runs on all three platforms.
