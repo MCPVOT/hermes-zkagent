@@ -37,10 +37,12 @@ attest   verdict accept, 5 actions, total 9, cap 20
 verify   verdict accept
 tamper   one hex character flipped in proof.json -> exit 1, public_input_mismatch
 disclose slot 2 -> a disclosure file that exists and contains a digest
+replay   verify(run_id) again -> ok false, verdict replay, "already accepted"
 attest 2 a second batch -> accept, execution_id 1002, total 8
 session  session.json lists both ids, total 17, root == merkle(receipt roots), roots == files
 index    session.json total +1 -> verify(session) -> session_mismatch naming the total
 session  verify(session) -> accept, both receipts accept, root + total match the index
+session  verify(session) again -> replay, refused on the root
 ```
 
 The tamper cases are the ones that matter. An attestation that says `accept` proves the happy

@@ -39,6 +39,7 @@ plugin-data/zkagent-attest/
   state.json          session header: cost table, target map, run history
   pending.jsonl       the ledger: one compact JSON row per tool call, append-only
   session.json        the index over every receipt: ordered ids, roots, totals, Merkle root
+  seen.json           the replay guard: execution ids and session roots already accepted
   authority.hex       policy signing key, mode 600, created once
   keys/               circuit-specific proving/verifying keys, mode 700
   runs/run-<id>/      policy.json, receipt.json, actions.json, proof.json, disclosure-<i>.json
@@ -91,6 +92,27 @@ acceptance. A receipt-level verify also requires that the receipt is listed in t
 receipt that accepts alone but is missing from (or disagrees with) the index is
 `session_mismatch`, because it is not part of the attested session.
 
+## The replay guard
+
+`seen.json` is one record per acceptance:
+
+```json
+{"version": 1,
+ "executions": {"1001": {"accepted_at": 1793898692, "trace_root": "…", "total": 9,
+                          "actions": 5, "receipt": "runs/run-1001/receipt.json"}},
+ "sessions":   {"<merkle root>": {"accepted_at": …, "executions": [1001, 1002], "total": 17,
+                                  "receipt_count": 2, "receipt": "session.json"}}}
+```
+
+`zkagent_verify` refuses before it runs the binary if the id (or root) is already there, and
+records only on accept. The guard is read-modify-write with an atomic replace; two verifies
+racing could in principle lose one record, which is why the format is one small file and not
+a log — a lost record costs a replay check, not evidence. It is local by design: it sees this
+profile's acceptances, not the world's. Execution ids are never reused — a session started
+over a cleared `state.json` continues above the highest accepted id, and an explicitly
+requested id that is spent is refused rather than renumbered.
+
+
 ## The cost of the hook
 
 `post_tool_call` runs synchronously on every tool call the agent makes, so its per-call cost
@@ -135,6 +157,7 @@ it in Python would duplicate the MiMC tree for no benefit.
 | verify rejects | `ok: false`, `verdict: "reject"`, `reason_code` preserved |
 | `session.json` disagrees with the receipts | `ok: false`, `verdict: "session_mismatch"`, the problems listed; nothing recorded |
 | a receipt accepts but the index omits it | `ok: false`, `verdict: "session_mismatch"`, `reason: "receipt_not_indexed"` |
+| an execution id (or session root) already accepted | `ok: false`, `verdict: "replay"`, `reason: "already_accepted"`, `accepted_at` |
 | the hook itself throws | swallowed; the tool call is unaffected |
 
 ## What is deliberately absent

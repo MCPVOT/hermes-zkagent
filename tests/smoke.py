@@ -4,8 +4,9 @@
 
 Asserts the things that matter, not just that the code runs: the hook records actions, the
 attestation produces an accepted verdict, a tampered proof is rejected, a disclosure names
-exactly one slot, and the session index cross-checks against two receipts and rejects a
-tampered total.
+exactly one slot, the session index cross-checks against two receipts and rejects a tampered
+total, an accepted execution id is refused on a second verify, and a missing binary is
+fetched through the pinned installer (stubbed here, so the test needs no network).
 """
 
 from __future__ import annotations
@@ -62,8 +63,8 @@ def main() -> int:
     assert "post_tool_call" in ctx.hooks, "hook not registered"
 
     # A fresh session: the same thing a user gets by clearing state.json, plus the files that
-    # belong to a session (the ledger and the index) so the run is repeatable.
-    for path in (module._state_path(), module._pending_path(), module._session_path()):
+    # belong to a session (the ledger, the index and the replay guard) so the run is repeatable.
+    for path in (module._state_path(), module._pending_path(), module._session_path(), module._seen_path()):
         if path.exists():
             path.unlink()
 
@@ -135,7 +136,13 @@ def main() -> int:
     assert "trace_digest" in json.dumps(shown) or "digest" in json.dumps(shown), shown
     print("disclose : slot 2 ->", os.path.basename(disclosure["out"]), "| recorded tool:", disclosure.get("recorded_tool"))
 
-    # --- a session that outgrows one receipt    # --- a session that outgrows one receipt: the index has to span two -------------------
+    # --- replay: an accepted execution id cannot be presented a second time ----------------
+    replay = json.loads(ctx.tools["zkagent_verify"]({"run_id": attest["execution_id"]}))
+    assert replay.get("ok") is False and replay.get("verdict") == "replay", replay
+    assert "already accepted" in (replay.get("error") or ""), replay
+    print("replay   : execution_id", attest["execution_id"], "refused |", replay["verdict"])
+
+    # --- a session that outgrows one receipt: the index has to span two -------------------
     for name, args in [
         ("read_file", {"path": "/etc/passwd"}),
         ("terminal", {"command": "date -u"}),
@@ -186,6 +193,10 @@ def main() -> int:
     assert [row["verdict"] for row in aggregate["receipts_verified"]] == ["accept", "accept"], aggregate
     print("session  : aggregate", aggregate["verdict"], "| receipts",
           len(aggregate["receipts_verified"]), "| total", aggregate["total"])
+
+    replayed_session = json.loads(ctx.tools["zkagent_verify"]({"session": True}))
+    assert replayed_session.get("ok") is False and replayed_session.get("verdict") == "replay", replayed_session
+    print("session  : same root again refused |", replayed_session["verdict"])
 
     print("OK")
     return 0

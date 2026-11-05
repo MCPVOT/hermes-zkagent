@@ -1,5 +1,5 @@
 name: zkagent-attest
-version: 0.2.0
+version: 0.3.0
 description: "Verifiable receipts for what an agent actually did: records each tool call, proves the session stayed inside a signed policy cap without revealing which tools ran, and discloses exactly one action on request. Drives the zkagent CLI (Groth16)."
 author: MCPVOT
 license: MIT

@@ -52,6 +52,7 @@ DEFAULT_COSTS = {
 
 PENDING_FILE = "pending.jsonl"
 SESSION_FILE = "session.json"
+SEEN_FILE = "seen.json"
 _UNSET = object()
 
 # Cost table and target map, rebuilt from state.json only when its signature changes. A cache
@@ -100,7 +101,8 @@ def _session_path() -> Path:
     return _data_dir() / SESSION_FILE
 
 
-
+def _seen_path() -> Path:
+    return _data_dir() / SEEN_FILE
 
 
 def _signature(path: Path) -> tuple[int, int, int] | None:
@@ -587,6 +589,70 @@ def _session_report() -> dict:
     }
 
 
+# ------------------------------------------------------------------------- replay
+#
+# A receipt is evidence for one execution, once. Presenting the same one twice is a replay,
+# and a replayed receipt would make a single event look like two — the same failure the
+# protocol guards against internally (`Receipt::is_replay`). `seen.json` is the guard's
+# memory: the execution ids `zkagent_verify` has accepted, and the session roots it has
+# accepted, each with the time and the artifact it came from.
+#
+# Scope, stated: this is a local guard. It stops an agent from re-verifying its own evidence
+# and reporting a second acceptance; it cannot stop a third party who holds a copy of the
+# files from verifying them elsewhere. Closing that needs the chain to track spent receipts,
+# which is the protocol's job, not a JSON file's.
+
+
+def _stamp(ts: Any) -> str:
+    try:
+        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(ts)))
+    except (TypeError, ValueError, OSError):
+        return "an unknown time"
+
+
+def _load_seen() -> dict:
+    try:
+        data = json.loads(_seen_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    data.setdefault("version", 1)
+    for kind in ("executions", "sessions"):
+        if not isinstance(data.get(kind), Mapping):
+            data[kind] = {}
+    return data
+
+
+def _seen_records(kind: str) -> dict:
+    section = _load_seen().get(kind)
+    return dict(section) if isinstance(section, Mapping) else {}
+
+
+def _record_acceptance(kind: str, key: str, record: Mapping[str, Any]) -> tuple[bool, str | None]:
+    """Add one acceptance to seen.json, atomically. Returns (recorded, error)."""
+    seen = _load_seen()
+    seen[kind][str(key)] = dict(record)
+    path = _seen_path()
+    tmp = path.with_suffix(".tmp")
+    try:
+        tmp.write_text(json.dumps(seen, indent=2, sort_keys=True), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError as exc:
+        return False, f"could not write {SEEN_FILE}: {exc}"
+    return True, None
+
+
+def _refusal(kind: str, key: str, record: Mapping[str, Any]) -> str:
+    label = "execution_id" if kind == "executions" else "session root"
+    source = f" (from {record['receipt']})" if record.get("receipt") else ""
+    return (
+        f"{label} {key} was already accepted at {_stamp(record.get('accepted_at'))}{source}. "
+        "The same evidence cannot be accepted twice: verifying it again is a replay, and a "
+        "replayed receipt would make one execution look like two. Replay refused."
+    )
+
+
 # -------------------------------------------------------------------------- tools
 
 
@@ -609,6 +675,7 @@ def tool_status(args: Mapping[str, Any] | None = None) -> str:
     state = _load_state()
     pending = _pending(state)
     runs = state.get("runs") or []
+    seen = _load_seen()
     payload: dict[str, Any] = {
         "plugin": PLUGIN_NAME,
         "binary": binary,
@@ -675,6 +742,21 @@ def tool_attest(args: Mapping[str, Any] | None = None) -> str:
     ttl = int(params.get("ttl_seconds", 3600))
     chain_id = int(params.get("chain_id", 1))
     run_id = int(params.get("execution_id", state.get("next_run_id", 1001)))
+    # seen.json outlives state.json, so an id that was already accepted must never be handed to
+    # different evidence: a cleared session continues above the highest accepted id, and an
+    # explicitly requested id that is spent is refused rather than silently renumbered.
+    accepted_ids = {int(key) for key in _seen_records("executions") if str(key).isdigit()}
+    if run_id in accepted_ids:
+        if "execution_id" in params:
+            return _json(
+                {
+                    "ok": False,
+                    "error": f"execution_id {run_id} was already accepted (see {SEEN_FILE}); a receipt id is "
+                    f"evidence for one execution and cannot be reused. Use {max(accepted_ids) + 1} or any free id.",
+                }
+            )
+        run_id = max(accepted_ids) + 1
+
     if total > max_amount:
         return _json(
             {
@@ -855,7 +937,9 @@ def tool_verify(args: Mapping[str, Any] | None = None) -> str:
 
     Every path first cross-checks `session.json` against the receipts on disk; a present but
     disagreeing index is a hard failure, because accepting a receipt whose session index is
-    corrupt would report a consistency the evidence does not have.
+    corrupt would report a consistency the evidence does not have. Acceptance is then
+    recorded in `seen.json`, and a second attempt at the same execution id (or session root)
+    is refused as a replay.
     """
     params = dict(args or {})
     binary, error = _need_binary()
@@ -893,6 +977,21 @@ def _verify_one(binary: str, runs: Sequence[Mapping[str, Any]], report: Mapping[
     run = next((r for r in runs if int(r["run_id"]) == run_id), None)
     if not run:
         return _json({**payload, "ok": False, "error": f"no attestation with execution_id {run_id}"})
+
+    record = _seen_records("executions").get(str(run_id))
+    if record:
+        return _json(
+            {
+                **payload,
+                "ok": False,
+                "verdict": "replay",
+                "reason": "already_accepted",
+                "execution_id": run_id,
+                "replayed": True,
+                "accepted_at": record.get("accepted_at"),
+                "error": _refusal("executions", str(run_id), record),
+            }
+        )
 
     run_dir = Path(str(run["dir"]))
     verdict = _verify_receipt(binary, run_dir, params.get("now"))
@@ -933,6 +1032,20 @@ def _verify_one(binary: str, runs: Sequence[Mapping[str, Any]], report: Mapping[
                 }
             )
 
+    recorded, record_error = _record_acceptance(
+        "executions",
+        str(run_id),
+        {
+            "accepted_at": int(time.time()),
+            "trace_root": verdict.get("trace_root") or str(run.get("trace_root") or ""),
+            "total": run.get("total"),
+            "actions": run.get("actions"),
+            "receipt": _relative(run_dir / "receipt.json"),
+        },
+    )
+    payload["replay_guard"] = {"file": str(_seen_path()), "recorded": recorded}
+    if record_error:
+        payload["replay_guard"]["error"] = record_error
     return _json(payload)
 
 
@@ -948,6 +1061,21 @@ def _verify_session(binary: str, report: Mapping[str, Any], payload: dict, param
             }
         )
     root = str(report.get("root") or "")
+    record = _seen_records("sessions").get(root)
+    if record:
+        return _json(
+            {
+                **payload,
+                "ok": False,
+                "verdict": "replay",
+                "reason": "session_already_accepted",
+                "root": root,
+                "replayed": True,
+                "accepted_at": record.get("accepted_at"),
+                "error": _refusal("sessions", root, record),
+            }
+        )
+
     receipts: list[dict] = []
     for entry in report.get("entries") or []:
         verdict = _verify_receipt(binary, Path(str(entry["dir"])), params.get("now"))
@@ -976,6 +1104,20 @@ def _verify_session(binary: str, report: Mapping[str, Any], payload: dict, param
         )
         return _json(payload)
 
+    recorded, record_error = _record_acceptance(
+        "sessions",
+        root,
+        {
+            "accepted_at": int(time.time()),
+            "executions": [r["execution_id"] for r in receipts],
+            "total": report.get("total"),
+            "receipt_count": report.get("receipt_count"),
+            "receipt": _relative(_session_path()),
+        },
+    )
+    payload["replay_guard"] = {"file": str(_seen_path()), "recorded": recorded}
+    if record_error:
+        payload["replay_guard"]["error"] = record_error
     return _json(payload)
 
 

@@ -33,7 +33,7 @@ agent works ──▶ tool calls recorded ──▶ policy signed ──▶ Grot
 |---|---|
 | `zkagent_status` | Which zkagent binary is in use, how many actions are pending, the last attestation, the session index |
 | `zkagent_attest` | Sign a policy cap, prove the session inside it, add the receipt to `session.json` |
-| `zkagent_verify` | Verify one receipt, or the whole session with `{"session": true}` |
+| `zkagent_verify` | Verify one receipt, or the whole session with `{"session": true}`; refuse a replay |
 | `zkagent_disclose` | Reveal one action's digest plus its inclusion path |
 
 Plus a `post_tool_call` hook: it records every tool call automatically, so the ledger fills
@@ -70,7 +70,19 @@ and nothing is accepted until the index is rebuilt.
 zkagent_verify {"session": true}    # every receipt accepts, roots match, totals add up, one root
 ```
 
-## Why this is a plugin and not a skill
+## Replay
+
+`zkagent_verify` records what it accepted in `seen.json`: the execution ids it verified one
+by one, and the session roots it accepted whole. A second attempt at the same id (or the same
+root) is refused — `verdict: "replay"`, `reason: "already_accepted"`, and a message naming
+when it was first accepted. A receipt is evidence for one execution, once; presenting it
+again would make one event look like two. Execution ids are never reused: a session started
+over a cleared `state.json` continues above the highest accepted id.
+
+Stated plainly: this is a **local** guard. It stops an agent from re-verifying its own
+evidence and reporting a second acceptance, which is the failure the protocol's
+`Receipt::is_replay` names. It cannot stop someone who copies the files and verifies them
+elsewhere; that needs the chain to track spent receipts, which is the protocol's job.
 
 ## Why this is a plugin and not a skill
 
@@ -131,17 +143,20 @@ hook. It proves the recorded set is consistent with the receipt and inside the p
 
 - runs `zkagent` as a subprocess (`setup`, `policy`, `prove`, `verify`, `disclose`)
 - writes under `plugin-data/zkagent-attest/` only: keys, policies, receipts, proofs, the
-  session index, state
+  session index, the replay guard, state
 - a `post_tool_call` hook that appends one JSON row per tool call and never raises
-- no network calls, no credential reads, no auto-updater, no shell outside `zkagent`
+- no credential reads, no auto-updater, no shell outside `zkagent`
 
 ## Limitations, stated
 
 - One trusted setup per install, single-party, development-grade. Not a ceremony.
 - 8 actions per receipt, by circuit design.
 - The ledger is per profile and survives updates; clear `state.json` to start a fresh one.
+  `seen.json` deliberately survives that, so an execution id accepted once is never reused.
 - `session.json` is an index, not a proof: it is only as good as the receipts under `runs/`,
   which is exactly why `zkagent_verify` re-reads them instead of trusting it.
+- Replay refusal is local to this profile. It cannot see a receipt presented on another
+  machine.
 - `chain_id` is carried through the receipt, not enforced against a network.
 
 ## Licence

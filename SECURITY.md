@@ -12,7 +12,7 @@ issue for anything that could let a receipt lie.
 |---|---|
 | Files | `<profile>/plugin-data/zkagent-attest/` only |
 | Processes | `zkagent` (setup, policy, prove, verify, disclose), resolved from `ZKAGENT_BIN` or `PATH` |
-| Network | none |
+| Network | one request, at most, and only when no `zkagent` binary is found: the pinned release URL from `MCPVOT/zkagent`, sha256 verified before install |
 | Credentials | none; nothing reads `.env`, `auth.json` or any keychain |
 | Host code | public plugin API only (`register_tool`, `register_hook`); no core patching |
 
@@ -40,14 +40,16 @@ repository.
 arguments. Low-entropy arguments could be brute-forced from a digest; do not disclose a
 slot whose arguments are guessable if the arguments themselves are sensitive.
 
+**The session index is not trusted, it is checked.** `session.json` has no signature; it is an
+index over receipts. It is accepted only when every listed root, total and action count
+matches the receipt file it names, the sums match the session total, and every receipt
+verifies. A doctored index therefore fails closed (`session_mismatch`); it cannot change what
+a receipt proves, and it cannot add a receipt that does not exist.
+
+**Replay refusal is local.** `seen.json` records the ids and session roots this profile has
+accepted, and refuses a second acceptance. It cannot see the same receipt presented on
+another machine or another profile, so it is not a global anti-replay mechanism — that needs
+the chain to track spent receipts, which the protocol owns. Treat it as a guard against an
+agent inflating its own acceptance count, not as a settlement layer.
+
 ## Supply chain
-
-- No bundled binaries, no post-install downloads, no self-updater.
-- No Python dependencies outside the standard library.
-- The `zkagent` binary is the trust boundary: pin it (`ZKAGENT_BIN`) and check
-  `zkagent version` reports the commit and artifact format you expect.
-
-## Known non-goals
-
-Sandboxing the agent, metering real money, proving that a policy was *good*, and preventing
-an agent from doing something it is allowed to do.

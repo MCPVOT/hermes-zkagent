@@ -8,7 +8,9 @@ One take, five beats, no editing. Everything below is runnable on this machine.
 python3 scripts/install-zkagent.py                 # pins v0.3.1+2026-11-05, verifies sha256
 hermes plugins list | grep zkagent-attest          # must say enabled
 rm -f "$HERMES_HOME/plugin-data/zkagent-attest/state.json" \
-      "$HERMES_HOME/plugin-data/zkagent-attest/pending.jsonl"   # empty ledger
+      "$HERMES_HOME/plugin-data/zkagent-attest/pending.jsonl" \
+      "$HERMES_HOME/plugin-data/zkagent-attest/session.json" \
+      "$HERMES_HOME/plugin-data/zkagent-attest/seen.json"       # empty session, fresh replay guard
 hermes -p trilogy-brain                            # NEW session: tools register at start
 ```
 
@@ -24,7 +26,8 @@ the plugin is enabled but this session predates it.
 | 0:15 | 5 tool calls | `read_file`, `terminal`, `web_search`, `patch`, `read_file` — any real calls |
 | 0:30 | `zkagent_status` | `pending_actions: 5` — the hook counted them, nobody asked it to |
 | 0:38 | `zkagent_attest {"max_amount": 20}` | verdict **accept**, actions 5, total 9, cap 20 |
-| 0:50 | `zkagent_verify {}` | verdict **accept** again — the artifact, not the memory |
+| 0:50 | `zkagent_verify {"session": true}` | verdict **accept**, the receipts' roots and totals re-checked against `session.json` |
+| 0:56 | `zkagent_verify {"session": true}` again | **replay**, refused — the same session root cannot be evidence twice |
 | 0:58 | tamper | `cp proof.json bad.json`, flip one hex char, verify → **reject**, `public_input_mismatch` |
 | 1:08 | `zkagent_disclose {"index": 2}` | one digest + its inclusion path; the other four stay hidden |
 | 1:15 | close | "Totals are public, actions are not, and a tampered proof fails." |
