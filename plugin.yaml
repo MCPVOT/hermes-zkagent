@@ -43,3 +43,9 @@ config_schema:
     default: 3
     description: "Policy units charged for one browser_exec call."
 requires_hermes: ">=0.22.5"
+# The Desktop surface needs no key here: `desktop/plugin.js` is the pane and
+# `dashboard/plugin_api.py` (declared in `dashboard/manifest.json`) is the read-only route it
+# draws from. `hermes plugins validate` finds both by their paths — `desktop/plugin.js` is one
+# of the loadable entrypoints it names, and the pane itself is linted by the desktop-surface
+# check. There is no `desktop:` field in the manifest schema; adding one would only log an
+# "unknown plugin.yaml field" warning at load.
