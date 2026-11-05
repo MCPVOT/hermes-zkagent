@@ -6,8 +6,11 @@
     python3 scripts/bench.py --breakdown     # per-component cost inside the hook
 
 The hook runs synchronously on every tool call the agent makes, so the number that matters
-is wall time per call, not lines of code. State is written to a throwaway HERMES_HOME so a
+is wall time per call, not lines of code. State is written to a throwaway HERMES_HOME, so a
 run never touches the ledger a real session is using.
+
+`--repeat` takes the median of N full runs; a loaded machine can move a single run by 50%,
+and a median is the honest summary of that.
 """
 
 from __future__ import annotations
@@ -42,15 +45,23 @@ def make_args(size: int, index: int = 0) -> dict:
     return {"path": f"/tmp/file-{index}.txt", "body": filler}
 
 
-def time_hook(module, calls: int, arg_bytes: int, fresh: bool = True) -> tuple[float, int, pathlib.Path]:
+def ledger_bytes(plugin) -> int:
+    """Everything the plugin keeps for one session: header plus pending rows."""
+    total = 0
+    for path in (plugin._state_path(), plugin._state_path().parent / "pending.jsonl"):
+        if path.exists():
+            total += path.stat().st_size
+    return total
+
+
+def time_hook(calls: int, arg_bytes: int) -> tuple[float, int]:
+    """ms per call over `calls` hook invocations, and the bytes on disk afterwards."""
     home = pathlib.Path(tempfile.mkdtemp(prefix="zkbench-"))
     old = os.environ.get("HERMES_HOME")
     os.environ["HERMES_HOME"] = str(home)
     try:
         plugin = load_plugin()
         state = plugin._state_path()
-        if fresh and state.exists():
-            state.unlink()
         args = make_args(arg_bytes)
         tools = ("read_file", "terminal", "web_search", "patch", "web_extract")
         hook = plugin._on_post_tool_call
@@ -62,8 +73,7 @@ def time_hook(module, calls: int, arg_bytes: int, fresh: bool = True) -> tuple[f
         for index in range(calls):
             hook(tool_name=tools[index % len(tools)], args=args, result="ok", task_id="bench")
         elapsed = time.perf_counter() - started
-        size = state.stat().st_size if state.exists() else 0
-        return elapsed * 1000.0 / calls, size, state
+        return elapsed * 1000.0 / calls, ledger_bytes(plugin)
     finally:
         if old is None:
             os.environ.pop("HERMES_HOME", None)
@@ -71,17 +81,14 @@ def time_hook(module, calls: int, arg_bytes: int, fresh: bool = True) -> tuple[f
             os.environ["HERMES_HOME"] = old
 
 
-def breakdown(module_path=None, calls: int = 200) -> None:
-    """Time each step the hook performs, on the unmodified state shape."""
+def breakdown(arg_bytes: int = 200, calls: int = 300) -> None:
+    """Time each step of the current hook, so a change can be attributed to a step."""
     home = pathlib.Path(tempfile.mkdtemp(prefix="zkbench-"))
     os.environ["HERMES_HOME"] = str(home)
     plugin = load_plugin()
-    state = plugin._state_path()
-    for index in range(200):
-        plugin._record("read_file", make_args(200, index))
-    body = json.loads(state.read_text())
-    text = state.read_text()
-    args = make_args(200)
+    args = make_args(arg_bytes)
+    for index in range(20):
+        plugin._record("read_file", make_args(arg_bytes, index))
 
     def bench(fn, n=calls):
         fn()
@@ -91,33 +98,30 @@ def breakdown(module_path=None, calls: int = 200) -> None:
             fn()
         return (time.perf_counter() - start) * 1e6 / n
 
-    load_us = bench(lambda: json.loads(text))
-    dump_us = bench(lambda: json.dumps(body, indent=2, sort_keys=True))
-    canonical_us = bench(lambda: plugin._canonical(args))
-    digest_us = bench(lambda: plugin._digest(args))
-    costs_us = bench(lambda: plugin._costs())
-    read_us = bench(lambda: state.read_text(encoding="utf-8"))
-    tmp = state.with_suffix(".tmp")
-    dump_text = json.dumps(body, indent=2, sort_keys=True)
+    def has(name: str) -> bool:
+        return callable(getattr(plugin, name, None))
 
-    def write_only():
-        tmp.write_text(dump_text, encoding="utf-8")
-
-    def write_replace():
-        tmp.write_text(dump_text, encoding="utf-8")
-        os.replace(tmp, state)
-
-    write_us = bench(write_only)
-    replace_us = bench(write_replace) - write_us
-    print(f"state bytes                 {len(text):>10,}")
-    print(f"read_text                   {read_us:>10.1f} us")
-    print(f"json.loads                  {load_us:>10.1f} us")
-    print(f"json.dumps(indent=2)        {dump_us:>10.1f} us")
-    print(f"write_text                  {write_us:>10.1f} us")
-    print(f"os.replace                  {replace_us:>10.1f} us")
-    print(f"_canonical(args)            {canonical_us:>10.1f} us")
-    print(f"_digest(args)               {digest_us:>10.1f} us")
-    print(f"_costs() [loads state]      {costs_us:>10.1f} us")
+    steps: list[tuple[str, float]] = [("_record (whole hook path)", bench(lambda: plugin._record("read_file", args), 200))]
+    steps.append(("_digest (sha256 of canonical args)", bench(lambda: plugin._digest(args))))
+    steps.append(("_costs", bench(lambda: plugin._costs())))
+    steps.append(("_load_state", bench(lambda: plugin._load_state())))
+    for name in ("_signature", "_row_line", "_append_row", "_pending"):
+        if has(name):
+            if name == "_signature":
+                fn = lambda: plugin._signature(plugin._state_path())
+            elif name == "_row_line":
+                row = {"tool": "read_file", "target": 1, "amount": 1, "trace_digest": 1, "at": 1}
+                fn = lambda: plugin._row_line(row)
+            elif name == "_append_row":
+                row = {"tool": "read_file", "target": 1, "amount": 1, "trace_digest": 1, "at": 1}
+                fn = lambda: plugin._append_row(row)
+            else:
+                fn = lambda: plugin._pending()
+            steps.append((name, bench(fn)))
+    width = max(len(label) for label, _ in steps) + 2
+    for label, us in steps:
+        print(f"{label:<{width}} {us:8.2f} us")
+    print(f"{'ledger on disk':<{width}} {ledger_bytes(plugin):8d} B")
 
 
 def main() -> int:
@@ -129,15 +133,14 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.breakdown:
-        breakdown()
+        breakdown(args.arg_bytes or 200)
         return 0
 
-    sizes = [args.arg_bytes] if args.arg_bytes else [200, 200 * 1024]
-    for size in sizes:
-        samples = [time_hook(load_plugin(), args.calls, size) for _ in range(args.repeat)]
+    for size in [args.arg_bytes] if args.arg_bytes else [200, 200 * 1024]:
+        samples = [time_hook(args.calls, size) for _ in range(args.repeat)]
         ms = statistics.median(sample[0] for sample in samples)
-        kib = samples[-1][1] / 1024.0
-        print(f"args {size:>7} B   {ms:8.3f} ms/call   state after {args.calls} calls: {kib:6.1f} KiB")
+        kib = samples[0][1] / 1024.0
+        print(f"args {size:>7} B   {ms:8.3f} ms/call   on disk after {args.calls} calls: {kib:6.1f} KiB")
     return 0
 
 
