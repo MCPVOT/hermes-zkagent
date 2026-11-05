@@ -13,6 +13,7 @@ explains the published totals inside the signed policy.
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import hashlib
 import importlib.util
 import io
@@ -20,6 +21,7 @@ import json
 import os
 import shutil
 import subprocess
+import threading
 import sys
 import time
 from pathlib import Path
@@ -906,7 +908,34 @@ def _ensure_setup(binary: str) -> None:
     os.chmod(keys, 0o700)
 
 
+_ATTEST_LOCK = threading.Lock()
+
+
 def tool_attest(args: Mapping[str, Any] | None = None) -> str:
+    """Serialise attestation across threads and processes.
+
+    Two callers must never consume the same pending rows: without this, the loser of a race
+    returns a payload with no verdict and no error, which reads as "nothing to do". The file
+    lock covers other processes, the thread lock covers this one (flock is per-process).
+    """
+    with _ATTEST_LOCK:
+        lock_path = _data_dir() / "attest.lock"
+        with open(lock_path, "a+") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                payload = json.loads(_tool_attest_unlocked(args))
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        if (
+            not payload.get("ok")
+            and payload.get("verdict") is None
+            and "nothing to attest" in str(payload.get("error", ""))
+        ):
+            payload["error"] = "another attestation consumed the pending actions; nothing left to prove"
+        return json.dumps(payload, indent=2, sort_keys=True)
+
+
+def _tool_attest_unlocked(args: Mapping[str, Any] | None = None) -> str:
     params = dict(args or {})
     binary, error, install = _need_binary()
     if error:
