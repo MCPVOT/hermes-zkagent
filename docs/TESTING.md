@@ -65,6 +65,18 @@ This is the only step that proves the model can actually see and call the tools.
 - Long sessions: batching beyond 8 actions is exercised by the refusal path, not by a
   50-call session.
 
+## Not a gate: the hook's cost
+
+The hook is on the user's critical path, so a change to it needs a number, not an opinion:
+
+```bash
+python3 scripts/bench.py --repeat 7      # ms/call at 200 B and 200 KB, and the bytes on disk
+python3 scripts/bench.py --breakdown     # which step inside the hook pays for it
+```
+
+It writes to a throwaway `HERMES_HOME`, so it never touches a real session's ledger. Use
+`--repeat` and quote the median: a loaded machine moves a single run by tens of percent.
+
 ## Reproducing a release
 
 1. `tests/smoke.py` green against the binary version you intend to require.
