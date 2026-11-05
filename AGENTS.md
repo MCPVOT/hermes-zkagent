@@ -13,9 +13,10 @@ One hook and four tools:
 
 ```
 post_tool_call  -> ledger.py behaviour inside __init__.py   (records one action per call)
-zkagent_status  -> binary, pending count, last run
-zkagent_attest  -> policy + receipt + proof + verify         (the only writer of a run)
-zkagent_verify  -> re-verify a run
+zkagent_status  -> binary (auto-fetched if missing), pending count, last run, session
+zkagent_attest  -> policy + receipt + proof + verify, then rebuilds session.json
+                     (the only writer of a run)
+zkagent_verify  -> re-verify a receipt or the session index, refusing a replayed id
 zkagent_disclose-> one digest + its inclusion path
 ```
 
