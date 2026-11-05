@@ -152,7 +152,8 @@ it in Python would duplicate the MiMC tree for no benefit.
 | no pending actions | `{"ok": false, "error": "nothing to attest yet..."}` |
 | session total above the requested cap | refusal naming both numbers; nothing signed |
 | an action above `max_per_action` | refusal |
-| binary missing | `zkagent_status.error` with the install instruction; other tools refuse |
+| binary missing | the pinned installer runs once; `install` in the result says what it did |
+| binary missing and the install failed | `zkagent_status.install` with the installer's own output, plus `error` naming both remedies; other tools refuse |
 | `prove` fails (bad witness, format drift) | `{"ok": false, "stage": "prove", ...}` |
 | verify rejects | `ok: false`, `verdict: "reject"`, `reason_code` preserved |
 | `session.json` disagrees with the receipts | `ok: false`, `verdict: "session_mismatch"`, the problems listed; nothing recorded |

@@ -53,3 +53,18 @@ the chain to track spent receipts, which the protocol owns. Treat it as a guard 
 agent inflating its own acceptance count, not as a settlement layer.
 
 ## Supply chain
+
+- No bundled binaries and no self-updater. One optional download: when no `zkagent` binary is
+  found, the plugin runs `scripts/install-zkagent.py`, which fetches the pinned release from
+  `MCPVOT/zkagent`, checks its sha256 against the table committed in that script, and refuses
+  to write anything on a mismatch. `ZKAGENT_AUTOINSTALL=0` disables it entirely.
+- The download is reported, not silent: the tool result carries `install.attempted`,
+  `install.ok`, the installer's own output and the destination path.
+- No Python dependencies outside the standard library.
+- The `zkagent` binary is the trust boundary: pin it (`ZKAGENT_BIN`) and check
+  `zkagent version` reports the commit and artifact format you expect.
+
+## Known non-goals
+
+Sandboxing the agent, metering real money, proving that a policy was *good*, and preventing
+an agent from doing something it is allowed to do.

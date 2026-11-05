@@ -92,13 +92,15 @@ faked, and the proof is the part that cannot be forged.
 
 ## Requirements
 
-- **zkagent**, the CLI (Rust). Install it from the upstream releases at
-  `https://github.com/MCPVOT/zkagent/releases` and make sure `zkagent` is on `PATH`, or
-  point `ZKAGENT_BIN` at the binary. This plugin does not bundle a binary: the catalog
-  forbids shipping compiled payloads, and a checksum-pinned download from the upstream
-  release is the honest alternative.
+- **zkagent**, the CLI (Rust). Point `ZKAGENT_BIN` at a build, put `zkagent` on `PATH`, or
+  let the plugin fetch it: when `zkagent_status` finds no binary it runs
+  `scripts/install-zkagent.py` — pinned version, pinned sha256 — into `~/.local/bin`, then
+  says so in its output. Set `ZKAGENT_AUTOINSTALL=0` to forbid that. This plugin does not
+  bundle a binary: the catalog forbids shipping compiled payloads, and a checksum-pinned
+  download from the upstream release is the honest alternative.
 - No Python dependencies. Standard library only.
-- No API keys. Nothing here talks to the network.
+- No API keys. One network call is possible: the checksum-pinned fetch above, and only when
+  no binary is installed.
 
 ## Usage
 
@@ -150,6 +152,10 @@ hook. It proves the recorded set is consistent with the receipt and inside the p
 - writes under `plugin-data/zkagent-attest/` only: keys, policies, receipts, proofs, the
   session index, the replay guard, state
 - a `post_tool_call` hook that appends one JSON row per tool call and never raises
+- **fetches the binary once, at most, and only if none is installed**: the pinned release
+  from the upstream project, sha256 checked before anything is written to `~/.local/bin`,
+  reported in `zkagent_status` (`install.attempted`, `install.output`) and refusable with
+  `ZKAGENT_AUTOINSTALL=0`. No other network call.
 - no credential reads, no auto-updater, no shell outside `zkagent`
 
 ## Limitations, stated

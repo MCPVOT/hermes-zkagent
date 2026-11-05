@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PLUGIN = os.path.dirname(HERE)
@@ -209,6 +210,74 @@ def main() -> int:
     replayed_session = json.loads(ctx.tools["zkagent_verify"]({"session": True}))
     assert replayed_session.get("ok") is False and replayed_session.get("verdict") == "replay", replayed_session
     print("session  : same root again refused |", replayed_session["verdict"])
+
+    # --- auto-fetch: with no binary anywhere, the pinned installer is the way in ---------
+    # The installer is stubbed to copy the real binary, so this proves the wiring (import by
+    # path, --dir into INSTALL_DIR, re-resolve, report) without a network dependency. The real
+    # script's sha256 check is unchanged in production; nothing here bypasses it.
+    stub_dir = pathlib.Path(tempfile.mkdtemp(prefix="zkagent-install-"))
+    stub_script = stub_dir / "install-zkagent.py"
+    stub_script.write_text(
+        textwrap.dedent(
+            f'''
+            import os, shutil, sys
+
+            def main():
+                dest = sys.argv[sys.argv.index("--dir") + 1]
+                os.makedirs(dest, exist_ok=True)
+                target = os.path.join(dest, "zkagent")
+                shutil.copyfile({str(BINARY)!r}, target)
+                os.chmod(target, 0o755)
+                print("stub installer ->", target)
+                return 0
+            '''
+        ),
+        encoding="utf-8",
+    )
+    saved = (
+        module.INSTALL_SCRIPT,
+        module.INSTALL_DIR,
+        module._INSTALL_ATTEMPTED,
+        module._INSTALLED_BIN,
+        dict(os.environ),
+    )
+    module.INSTALL_SCRIPT = stub_script
+    module.INSTALL_DIR = stub_dir / "bin"
+    module._INSTALL_ATTEMPTED = False
+    module._INSTALLED_BIN = None
+    os.environ.pop("ZKAGENT_BIN", None)
+    os.environ["PATH"] = str(stub_dir / "empty-path")
+    try:
+        fetched = json.loads(ctx.tools["zkagent_status"]({}))
+    finally:
+        module.INSTALL_SCRIPT, module.INSTALL_DIR = saved[0], saved[1]
+        module._INSTALL_ATTEMPTED, module._INSTALLED_BIN = saved[2], saved[3]
+        os.environ.clear()
+        os.environ.update(saved[4])
+    assert fetched.get("install", {}).get("ok") is True, fetched
+    assert fetched["binary"] == str(stub_dir / "bin" / "zkagent"), fetched
+    assert "stub installer" in fetched["install"].get("output", ""), fetched
+    print("autofetch: install reported |", fetched["binary"])
+
+    # --- auto-fetch failing is reported, not swallowed -----------------------------------
+    missing = (module.INSTALL_SCRIPT, module.INSTALL_DIR, module._INSTALL_ATTEMPTED, module._INSTALLED_BIN, dict(os.environ))
+    module.INSTALL_SCRIPT = stub_dir / "not-here.py"
+    module.INSTALL_DIR = stub_dir / "bin2"
+    module._INSTALL_ATTEMPTED = False
+    module._INSTALLED_BIN = None
+    os.environ.pop("ZKAGENT_BIN", None)
+    os.environ["PATH"] = str(stub_dir / "empty-path")
+    try:
+        broken_fetch = json.loads(ctx.tools["zkagent_status"]({}))
+    finally:
+        module.INSTALL_SCRIPT, module.INSTALL_DIR = missing[0], missing[1]
+        module._INSTALL_ATTEMPTED, module._INSTALLED_BIN = missing[2], missing[3]
+        os.environ.clear()
+        os.environ.update(missing[4])
+    assert broken_fetch["binary"] is None, broken_fetch
+    assert broken_fetch["install"]["ok"] is False and "installer not found" in broken_fetch["install"]["error"], broken_fetch
+    assert "Auto-install" in broken_fetch["error"], broken_fetch
+    print("autofetch: failed install reported in the tool output |", broken_fetch["install"]["error"][:60])
 
     print("OK")
     return 0

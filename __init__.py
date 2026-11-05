@@ -12,11 +12,15 @@ explains the published totals inside the signed policy.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import importlib.util
+import io
 import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -244,17 +248,101 @@ def _costs() -> dict:
     return _params()[0]
 
 
-# ------------------------------------------------------------------------- binary
+# ---------------------------------------------------------------- binary and install
+#
+# `scripts/install-zkagent.py` is the repository's checksum-pinned fetch of the upstream
+# release. It is the only installer this plugin will run: importing it and calling `main()`
+# keeps the sha256 check, the pinned version and the asset table in one place, so an
+# auto-fetch can never be a weaker install than the documented one. Nothing is downloaded
+# unless `_binary()` found nothing at all, and the attempt is reported to the caller.
+
+INSTALL_SCRIPT = Path(__file__).resolve().parent / "scripts" / "install-zkagent.py"
+INSTALL_DIR = Path.home() / ".local" / "bin"
+_INSTALL_ATTEMPTED = False
+_INSTALLED_BIN: str | None = None
+
+
+def _executable(path: str | None) -> str | None:
+    if path and os.path.isfile(path) and os.access(path, os.X_OK):
+        return path
+    return None
+
+
+def _install_binary() -> dict:
+    """Run the pinned installer into INSTALL_DIR, once per process, and say exactly what happened.
+
+    Returns a report; `ok` is True only when the installer exited 0. The output is captured
+    (the installer prints the URL, the digest and the destination) and echoed to the tool
+    result, because installing a binary the user did not ask for and not saying so would be
+    the wrong kind of convenience. It is not run when `ZKAGENT_AUTOINSTALL=0`.
+    """
+    global _INSTALL_ATTEMPTED, _INSTALLED_BIN
+    report: dict[str, Any] = {
+        "attempted": True,
+        "dir": str(INSTALL_DIR),
+        "script": str(INSTALL_SCRIPT),
+        "checksum": "pinned sha256, verified by scripts/install-zkagent.py",
+    }
+    if (os.environ.get("ZKAGENT_AUTOINSTALL") or "").strip().lower() in {"0", "false", "no"}:
+        return {**report, "attempted": False, "ok": False, "skipped": "ZKAGENT_AUTOINSTALL=0"}
+    if _INSTALL_ATTEMPTED:
+        return {**report, "attempted": False, "ok": False, "skipped": "already attempted in this process"}
+    _INSTALL_ATTEMPTED = True
+    if not INSTALL_SCRIPT.is_file():
+        return {**report, "ok": False, "error": f"installer not found at {INSTALL_SCRIPT}"}
+
+    buffer = io.StringIO()
+    saved_argv = sys.argv
+    try:
+        spec = importlib.util.spec_from_file_location("zkagent_installer", INSTALL_SCRIPT)
+        if spec is None or spec.loader is None:
+            return {**report, "ok": False, "error": "cannot load the installer"}
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        sys.argv = ["install-zkagent.py", "--dir", str(INSTALL_DIR)]
+        with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(buffer):
+            code = int(module.main() or 0)
+    except SystemExit as exc:  # unsupported platform or a usage error: the installer says why
+        code = int(exc.code or 1) if isinstance(exc.code, int) else 1
+    except Exception as exc:  # no network, no disk, a changed release: report, do not raise
+        code = 1
+        buffer.write(f"{type(exc).__name__}: {exc}")
+    finally:
+        sys.argv = saved_argv
+
+    output = buffer.getvalue().strip()
+    report["ok"] = code == 0
+    report["exit"] = code
+    report["output"] = output[-1200:]
+    if code == 0:
+        target = INSTALL_DIR / ("zkagent.exe" if os.name == "nt" else "zkagent")
+        _INSTALLED_BIN = _executable(str(target))
+        report["installed"] = str(target)
+    return report
+
+
+def _resolve_binary() -> tuple[str | None, dict | None]:
+    """Locate zkagent: ZKAGENT_BIN, then PATH, then (once) the pinned installer.
+
+    The third step is what makes "install the plugin and it works" true, and the report it
+    returns is the receipt for that step. `zkagent_status` shows it; the other tools attach
+    it when it fired during their own call.
+    """
+    env = _executable((os.environ.get("ZKAGENT_BIN") or "").strip())
+    if env:
+        return env, None
+    found = shutil.which("zkagent")
+    if found:
+        return found, None
+    if _INSTALLED_BIN:
+        return _INSTALLED_BIN, None
+    report = _install_binary()
+    binary = _INSTALLED_BIN or _executable(str(INSTALL_DIR / "zkagent")) or shutil.which("zkagent")
+    return (binary or None), report
 
 
 def _binary() -> str | None:
-    env = (os.environ.get("ZKAGENT_BIN") or "").strip()
-    if env and os.path.isfile(env) and os.access(env, os.X_OK):
-        return env
-    found = shutil.which("zkagent")
-    return found or None
-
-
+    return _resolve_binary()[0]
 
 
 def _run(binary: str, args: list[str], timeout: int = 180) -> tuple[int, str, str]:
@@ -733,18 +821,30 @@ def _json(payload: Mapping[str, Any]) -> str:
     return json.dumps(payload, indent=2, sort_keys=True)
 
 
-def _need_binary() -> tuple[str | None, str | None]:
-    binary = _binary()
+def _need_binary() -> tuple[str | None, str | None, dict | None]:
+    """(binary, error, install report). The report is None when no install was attempted."""
+    binary, install = _resolve_binary()
     if binary:
-        return binary, None
-    return None, (
-        "zkagent binary not found. Install the zkagent release (or build the workspace) "
-        "and either put `zkagent` on PATH or set ZKAGENT_BIN to its path."
+        return binary, None, install
+    detail = ""
+    if install:
+        if install.get("error"):
+            detail = f" Auto-install failed: {install['error']}."
+        elif install.get("output"):
+            detail = f" Auto-install said: {install['output'][-300:]}"
+        elif install.get("skipped"):
+            detail = f" Auto-install skipped ({install['skipped']})."
+    error = (
+        "zkagent binary not found and the pinned auto-install did not produce one."
+        + detail
+        + " Install it yourself with `python3 scripts/install-zkagent.py` (sha256-pinned), "
+        "or set ZKAGENT_BIN to a build's path."
     )
+    return None, error, install
 
 
 def tool_status(args: Mapping[str, Any] | None = None) -> str:
-    binary, error = _need_binary()
+    binary, error, install = _need_binary()
     state = _load_state()
     pending = _pending(state)
     runs = state.get("runs") or []
@@ -766,6 +866,8 @@ def tool_status(args: Mapping[str, Any] | None = None) -> str:
             "accepted_sessions": len(seen["sessions"]),
         },
     }
+    if install:
+        payload["install"] = install
     if error:
         payload["error"] = error
     elif binary:
@@ -806,9 +908,9 @@ def _ensure_setup(binary: str) -> None:
 
 def tool_attest(args: Mapping[str, Any] | None = None) -> str:
     params = dict(args or {})
-    binary, error = _need_binary()
+    binary, error, install = _need_binary()
     if error:
-        return _json({"ok": False, "error": error})
+        return _json({"ok": False, "error": error, "install": install} if install else {"ok": False, "error": error})
 
     state = _load_state()
     pending = _pending(state)
@@ -990,6 +1092,8 @@ def tool_attest(args: Mapping[str, Any] | None = None) -> str:
     }
     if session_error:
         payload["session_error"] = session_error
+    if install:
+        payload["install"] = install
     return _json(payload)
 
 
@@ -1024,8 +1128,8 @@ def tool_verify(args: Mapping[str, Any] | None = None) -> str:
     is refused as a replay.
     """
     params = dict(args or {})
-    binary, error = _need_binary()
-    base: dict[str, Any] = {}
+    binary, error, install = _need_binary()
+    base: dict[str, Any] = {"install": install} if install else {}
     if error:
         return _json({"ok": False, "error": error, **base})
     state = _load_state()
@@ -1205,9 +1309,9 @@ def _verify_session(binary: str, report: Mapping[str, Any], payload: dict, param
 
 def tool_disclose(args: Mapping[str, Any] | None = None) -> str:
     params = dict(args or {})
-    binary, error = _need_binary()
+    binary, error, install = _need_binary()
     if error:
-        return _json({"ok": False, "error": error})
+        return _json({"ok": False, "error": error, "install": install} if install else {"ok": False, "error": error})
     state = _load_state()
     runs = state.get("runs") or []
     if not runs:

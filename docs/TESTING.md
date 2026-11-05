@@ -44,6 +44,8 @@ session  session.json lists both ids, total 17, root == merkle(receipt roots), r
 index    session.json total +1 -> verify(session) -> session_mismatch naming the total
 session  verify(session) -> accept, both receipts accept, root + total match the index
 session  verify(session) again -> replay, refused on the root
+autofetch no binary on PATH, installer stub -> status.install.ok, binary re-resolved
+autofetch installer missing -> status.install.ok false, error names the install attempt
 ```
 
 The tamper cases are the ones that matter. An attestation that says `accept` proves the happy
@@ -51,7 +53,11 @@ path ran; a tampered proof that still says `accept` proves the plugin is lying, 
 `session.json` whose total no longer matches its receipts must fail rather than be reported as
 a warning. The smoke test fails loudly in both cases.
 
-## 3. Does it work where a user will run it?
+The auto-fetch case stubs the installer (it copies the real binary into a temp dir) so the
+test needs no network. It proves the plumbing — import by path, `--dir`, re-resolve, report —
+not the download; the sha256 check lives in `scripts/install-zkagent.py` and is unchanged by
+the plugin.
+
 ## 3. Does it work where a user will run it?
 
 ```bash
@@ -77,6 +83,9 @@ This is the only step that proves the model can actually see and call the tools.
   host home, but the smoke run has only been executed on Linux.
 - Long sessions: batching beyond 8 actions is exercised by the two-receipt aggregate, not by
   a 50-call session.
+- The real download in the auto-fetch path. The smoke run stubs the installer; a release
+  check runs `python3 scripts/install-zkagent.py --check`, which fetches and checks the sha256
+  without installing.
 
 ## Not a gate: the hook's cost
 
