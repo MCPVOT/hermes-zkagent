@@ -7,6 +7,8 @@ tool call is recorded, the session is proved to have stayed inside a policy cap 
 and the receipt publishes totals only. The actions stay private. When you need to show one
 of them, you reveal exactly one, with the Merkle path that places it in the attested set.
 
+Installs in one command, fetches its pinned `zkagent` binary itself on first use (sha256 checked), and makes no network calls of its own.
+
 **Read next:** [Constitution](CONSTITUTION.md) (the eight non-negotiables) ·
 [Architecture](docs/ARCHITECTURE.md) (data flow, files, failure modes) ·
 [Security](SECURITY.md) (threat model, what a receipt is worth) ·

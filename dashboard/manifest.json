@@ -5,6 +5,6 @@
   "version": "0.2.0",
   "api": "plugin_api.py",
   "tab": {
-    "hidden": true
+    "hidden": false
   }
 }
