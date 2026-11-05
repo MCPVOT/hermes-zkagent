@@ -7,6 +7,12 @@ tool call is recorded, the session is proved to have stayed inside a policy cap 
 and the receipt publishes totals only. The actions stay private. When you need to show one
 of them, you reveal exactly one, with the Merkle path that places it in the attested set.
 
+**Read next:** [Constitution](CONSTITUTION.md) (the eight non-negotiables) ·
+[Architecture](docs/ARCHITECTURE.md) (data flow, files, failure modes) ·
+[Security](SECURITY.md) (threat model, what a receipt is worth) ·
+[Testing](docs/TESTING.md) (the three gates) ·
+[Agents](AGENTS.md) (instructions for an agent working on this repo).
+
 ```
 agent works ──▶ tool calls recorded ──▶ policy signed ──▶ Groth16 proof ──▶ ACCEPT / REJECT
                                           (caps)                            (254-byte receipt)
