@@ -19,7 +19,7 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 PLUGIN_NAME = "zkagent-attest"
 TOOLSET = "zkagent"
@@ -27,7 +27,10 @@ MAX_ACTIONS = 8  # zkagent-core::MAX_ACTIONS: the circuit's fixed action slots
 ZERO_ROOT = "0" * 64
 
 # Relative cost of a tool call in policy units. Deliberately small and visible: the
-# point is to make the cap checkable, not to price real work accurately.
+# point is to make the cap checkable, not to price real work accurately. These values are
+# also `plugin.yaml`'s `config_schema` defaults; the two must stay identical (a host that
+# renders the settings form and a plugin that falls back to this table would otherwise
+# quote different prices for the same call).
 DEFAULT_COSTS = {
     "read_file": 1,
     "write_file": 2,
@@ -48,6 +51,7 @@ DEFAULT_COSTS = {
 # a header is not a ledger, and the next recorded call truncates it.
 
 PENDING_FILE = "pending.jsonl"
+SESSION_FILE = "session.json"
 _UNSET = object()
 
 # Cost table and target map, rebuilt from state.json only when its signature changes. A cache
@@ -90,6 +94,13 @@ def _state_path() -> Path:
 
 def _pending_path() -> Path:
     return _data_dir() / PENDING_FILE
+
+
+def _session_path() -> Path:
+    return _data_dir() / SESSION_FILE
+
+
+
 
 
 def _signature(path: Path) -> tuple[int, int, int] | None:
@@ -167,6 +178,8 @@ def _binary() -> str | None:
         return env
     found = shutil.which("zkagent")
     return found or None
+
+
 
 
 def _run(binary: str, args: list[str], timeout: int = 180) -> tuple[int, str, str]:
@@ -350,6 +363,230 @@ def _on_post_tool_call(tool_name: str, args: Any = None, result: Any = None, tas
         return
 
 
+# ------------------------------------------------------------------ session index
+#
+# The circuit has 8 action slots, so a real session produces several receipts. Each receipt
+# is independently verifiable; what is missing between them is the claim "these are the
+# receipts, in this order, and together they are the session". `session.json` is that index,
+# written beside `runs/` after every attestation.
+#
+# It carries no signature of its own, and needs none: every number in it is copied from a
+# receipt on disk or recomputed from those receipts. A tampered index is therefore caught by
+# comparing it with the artifacts — the listed trace roots must equal the receipt files, the
+# listed totals must equal their `total_amount`, the sum must equal the session total, and
+# the stored root must equal the root recomputed from the listed order. Any disagreement is
+# a hard failure in `zkagent_verify`, never a warning: an index that disagrees with the
+# receipts is either corrupt or a forgery, and both mean "do not accept".
+#
+# Merkle construction (deliberately small enough to re-implement from this paragraph):
+#   leaf      = sha256(trace_root bytes)      — the receipt's 32-byte root, decoded from hex
+#   node      = sha256(left || right)         — the two children's 32-byte digests, in order
+#   odd node  = promoted unchanged            — no duplication, no padding leaf
+#   one leaf  = that leaf's hex               — the root of a single-receipt session
+#   no leaves = ZERO_ROOT (64 hex zeros)      — a defined root for an empty index
+# Order is part of the commitment: leaves are taken in ascending execution_id order, and the
+# list is checked to be in that order, so reordering the receipts changes the root.
+
+
+def _merkle_root(roots: Sequence[str]) -> str:
+    """sha256 binary tree over the ordered receipt trace roots (see the construction above)."""
+    if not roots:
+        return ZERO_ROOT
+    level = [hashlib.sha256(bytes.fromhex(str(root))).digest() for root in roots]
+    while len(level) > 1:
+        paired = [
+            hashlib.sha256(level[i] + level[i + 1]).digest() for i in range(0, len(level) - 1, 2)
+        ]
+        if len(level) % 2:
+            paired.append(level[-1])
+        level = paired
+    return level[0].hex()
+
+
+def _relative(path: Path) -> str:
+    """Path as recorded in session.json: relative to the plugin data dir, so the index travels."""
+    try:
+        return str(path.resolve().relative_to(_data_dir().resolve()))
+    except (ValueError, OSError):
+        return str(path)
+
+
+def _receipt_entry(run: Mapping[str, Any]) -> dict:
+    """One index row, read from the receipt file rather than from state.json's summary.
+
+    The receipt on disk is the evidence; the run history is the plugin's note about it. If
+    the two disagree, the file wins and the discrepancy surfaces as a verify failure.
+    """
+    run_dir = Path(str(run.get("dir") or ""))
+    receipt_path = run_dir / "receipt.json"
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(
+            f"cannot index execution_id {run.get('run_id')}: {receipt_path} is unreadable ({exc})"
+        ) from exc
+    root = str(receipt.get("trace_root") or "")
+    try:
+        if len(root) != 64:
+            raise ValueError("not a 32-byte hex root")
+        bytes.fromhex(root)
+    except ValueError as exc:
+        raise RuntimeError(f"receipt {receipt_path} has an unusable trace_root ({exc})") from exc
+    return {
+        "execution_id": int(receipt.get("execution_id", run.get("run_id"))),
+        "trace_root": root,
+        "total": int(receipt.get("total_amount", 0)),
+        "actions": int(receipt.get("action_count", 0)),
+        "receipt": _relative(receipt_path),
+    }
+
+
+def _build_session(runs: Sequence[Mapping[str, Any]]) -> dict:
+    entries = sorted((_receipt_entry(run) for run in runs), key=lambda e: e["execution_id"])
+    roots = [entry["trace_root"] for entry in entries]
+    return {
+        "version": 1,
+        "updated_at": int(time.time()),
+        "receipt_count": len(entries),
+        "action_count": sum(entry["actions"] for entry in entries),
+        "total": sum(entry["total"] for entry in entries),
+        "root": _merkle_root(roots),
+        "merkle": {
+            "hash": "sha256",
+            "leaf": "sha256(trace_root bytes)",
+            "node": "sha256(left || right)",
+            "odd": "promoted unchanged",
+            "empty": ZERO_ROOT,
+            "order": "ascending execution_id",
+            "leaf_count": len(roots),
+        },
+        "receipts": entries,
+    }
+
+
+def _write_session(runs: Sequence[Mapping[str, Any]]) -> dict:
+    """Rebuild the index from the run history and replace it atomically.
+
+    Rebuilt, not appended: the receipts on disk are the source, so a lost or edited
+    `session.json` is repaired by the next attestation instead of drifting further.
+    """
+    index = _build_session(runs)
+    path = _session_path()
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(index, indent=2, sort_keys=True), encoding="utf-8")
+    os.replace(tmp, path)
+    return index
+
+
+def _session_report() -> dict:
+    """Cross-check session.json against the receipts on disk. Never raises; `ok` is the verdict.
+
+    `entries` is the internal, resolved form (with absolute run dirs); everything else is
+    safe to publish in a tool result.
+    """
+    path = _session_path()
+    try:
+        index = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {
+            "present": False,
+            "ok": False,
+            "error": f"no {SESSION_FILE} beside the runs; run zkagent_attest to build the session index",
+        }
+    except (OSError, ValueError) as exc:
+        return {"present": True, "ok": False, "problems": [f"{SESSION_FILE} is unreadable: {exc}"]}
+    if not isinstance(index, Mapping) or not isinstance(index.get("receipts"), list):
+        return {"present": True, "ok": False, "problems": [f"{SESSION_FILE} has no receipts list"]}
+
+    problems: list[str] = []
+    entries: list[dict] = []
+    roots: list[str] = []
+    data_root = _data_dir().resolve()
+    previous_id: int | None = None
+    for position, raw in enumerate(index.get("receipts") or []):
+        if not isinstance(raw, Mapping):
+            problems.append(f"receipts[{position}] is not an object")
+            continue
+        try:
+            execution_id = int(raw.get("execution_id"))
+            listed_total = int(raw.get("total"))
+            listed_actions = int(raw.get("actions"))
+            root = str(raw.get("trace_root") or "")
+        except (TypeError, ValueError):
+            problems.append(f"receipts[{position}] has non-numeric execution_id/total/actions")
+            continue
+        if previous_id is not None and execution_id <= previous_id:
+            problems.append(f"receipts[{position}] (execution_id {execution_id}) is out of order")
+        previous_id = execution_id
+        receipt_rel = str(raw.get("receipt") or "")
+        receipt_path = (data_root / receipt_rel).resolve()
+        if not str(receipt_path).startswith(str(data_root) + os.sep):
+            problems.append(f"receipts[{position}] points outside the data dir: {receipt_rel!r}")
+            continue
+        try:
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            problems.append(f"receipt for execution_id {execution_id} is missing or unreadable ({receipt_rel}: {exc})")
+            continue
+        if str(receipt.get("trace_root") or "") != root:
+            problems.append(
+                f"receipts[{position}] lists trace_root {root[:16]}… but {receipt_rel} says "
+                f"{str(receipt.get('trace_root'))[:16]}…"
+            )
+        if int(receipt.get("total_amount", -1)) != listed_total:
+            problems.append(
+                f"receipts[{position}] lists total {listed_total} but {receipt_rel} says "
+                f"total_amount {receipt.get('total_amount')}"
+            )
+        if int(receipt.get("action_count", -1)) != listed_actions:
+            problems.append(
+                f"receipts[{position}] lists {listed_actions} actions but {receipt_rel} says "
+                f"action_count {receipt.get('action_count')}"
+            )
+        if int(receipt.get("execution_id", -1)) != execution_id:
+            problems.append(
+                f"receipts[{position}] is execution_id {execution_id} but {receipt_rel} says "
+                f"{receipt.get('execution_id')}"
+            )
+        roots.append(root)
+        entries.append(
+            {
+                "execution_id": execution_id,
+                "trace_root": root,
+                "total": listed_total,
+                "actions": listed_actions,
+                "receipt": receipt_rel,
+                "dir": str(receipt_path.parent),
+            }
+        )
+
+    recomputed = _merkle_root(roots) if len(roots) == len(index.get("receipts") or []) else None
+    stored_root = str(index.get("root") or "")
+    if recomputed is not None and stored_root != recomputed:
+        problems.append(f"stored root {stored_root[:16] or '(none)'}… != root recomputed from the receipts {recomputed[:16]}…")
+    total = sum(entry["total"] for entry in entries)
+    if index.get("total") != total:
+        problems.append(f"session total {index.get('total')!r} != sum of the receipts {total}")
+    if index.get("receipt_count") != len(entries):
+        problems.append(f"receipt_count {index.get('receipt_count')!r} != {len(entries)} receipts listed")
+    if index.get("action_count") != sum(entry["actions"] for entry in entries):
+        problems.append(
+            f"action_count {index.get('action_count')!r} != sum of the receipts' action counts"
+        )
+    return {
+        "present": True,
+        "ok": not problems,
+        "root": recomputed,
+        "stored_root": stored_root,
+        "total": total,
+        "receipt_count": len(entries),
+        "action_count": sum(entry["actions"] for entry in entries),
+        "problems": problems,
+        "entries": entries,
+        "index": index,
+    }
+
+
 # -------------------------------------------------------------------------- tools
 
 
@@ -384,6 +621,17 @@ def tool_status(args: Mapping[str, Any] | None = None) -> str:
         payload["error"] = error
     elif binary:
         payload["zkagent"] = _version(binary)
+    try:
+        index = json.loads(_session_path().read_text(encoding="utf-8"))
+        payload["session"] = {
+            "file": str(_session_path()),
+            "receipt_count": index.get("receipt_count"),
+            "total": index.get("total"),
+            "root": index.get("root"),
+            "cross_checked": False,
+        }
+    except (OSError, ValueError):
+        payload["session"] = {"file": str(_session_path()), "present": False}
     return _json(payload)
 
 
@@ -427,7 +675,6 @@ def tool_attest(args: Mapping[str, Any] | None = None) -> str:
     ttl = int(params.get("ttl_seconds", 3600))
     chain_id = int(params.get("chain_id", 1))
     run_id = int(params.get("execution_id", state.get("next_run_id", 1001)))
-
     if total > max_amount:
         return _json(
             {
@@ -546,38 +793,44 @@ def tool_attest(args: Mapping[str, Any] | None = None) -> str:
     remaining = _compact(count)
     _save_state(state)
 
-    return _json(
-        {
-            "ok": code == 0,
-            "verdict": verdict.get("verdict"),
-            "reason": verdict.get("reason"),
-            "execution_id": run_id,
-            "actions": count,
-            "total": total,
-            "cap": max_amount,
-            "pending_after": len(remaining),
-            "receipt": str(receipt_path),
-            "proof": str(proof_path),
-            "policy": str(policy_path),
+    # The session index, rebuilt over every receipt this session has produced. A failure here
+    # does not discard the run — the receipt is already verified — but it is reported, because
+    # an index that silently did not update is exactly what the next verify would trip over.
+    session_block: dict[str, Any] | None = None
+    session_error: str | None = None
+    try:
+        index = _write_session(state["runs"])
+        session_block = {
+            "file": str(_session_path()),
+            "receipt_count": index["receipt_count"],
+            "total": index["total"],
+            "root": index["root"],
+            "merkle": index["merkle"]["node"],
         }
-    )
+    except (RuntimeError, OSError, ValueError) as exc:
+        session_error = str(exc)
+
+    payload: dict[str, Any] = {
+        "ok": code == 0,
+        "verdict": verdict.get("verdict"),
+        "reason": verdict.get("reason"),
+        "execution_id": run_id,
+        "actions": count,
+        "total": total,
+        "cap": max_amount,
+        "pending_after": len(remaining),
+        "receipt": str(receipt_path),
+        "proof": str(proof_path),
+        "policy": str(policy_path),
+        "session": session_block,
+    }
+    if session_error:
+        payload["session_error"] = session_error
+    return _json(payload)
 
 
-def tool_verify(args: Mapping[str, Any] | None = None) -> str:
-    params = dict(args or {})
-    binary, error = _need_binary()
-    if error:
-        return _json({"ok": False, "error": error})
-    state = _load_state()
-    runs = state.get("runs") or []
-    if not runs:
-        return _json({"ok": False, "error": "no attestation yet: call zkagent_attest first."})
-    run_id = int(params.get("run_id", runs[-1]["run_id"]))
-    run = next((r for r in runs if int(r["run_id"]) == run_id), None)
-    if not run:
-        return _json({"ok": False, "error": f"no attestation with execution_id {run_id}"})
-
-    run_dir = Path(run["dir"])
+def _verify_receipt(binary: str, run_dir: Path, now: Any = None) -> dict:
+    """Run the binary's verify against one stored receipt. `ok` means accept, not just exit 0."""
     cmd = [
         "--json", "verify",
         "--keys", str(_keys_dir()),
@@ -585,17 +838,145 @@ def tool_verify(args: Mapping[str, Any] | None = None) -> str:
         "--receipt", str(run_dir / "receipt.json"),
         "--proof", str(run_dir / "proof.json"),
     ]
-    now = params.get("now")
     if now is not None:
         cmd += ["--now", str(int(now))]
     code, out, err = _run(binary, cmd)
-    verdict: dict[str, Any] = {"ok": code == 0, "exit": code}
+    verdict: dict[str, Any] = {"exit": code}
     try:
         verdict.update(json.loads(out.strip().splitlines()[-1]))
     except (ValueError, IndexError):
         verdict["raw"] = (out or err).strip()[:400]
-    verdict["execution_id"] = run_id
-    return _json(verdict)
+    verdict["ok"] = code == 0 and verdict.get("verdict") == "accept"
+    return verdict
+
+
+def tool_verify(args: Mapping[str, Any] | None = None) -> str:
+    """Verify one receipt (`run_id`) or the whole session (`session: true`).
+
+    Every path first cross-checks `session.json` against the receipts on disk; a present but
+    disagreeing index is a hard failure, because accepting a receipt whose session index is
+    corrupt would report a consistency the evidence does not have.
+    """
+    params = dict(args or {})
+    binary, error = _need_binary()
+    base: dict[str, Any] = {}
+    if error:
+        return _json({"ok": False, "error": error, **base})
+    state = _load_state()
+    runs = state.get("runs") or []
+    if not runs:
+        return _json({"ok": False, "error": "no attestation yet: call zkagent_attest first.", **base})
+
+    report = _session_report()
+    payload: dict[str, Any] = dict(base)
+    payload["session"] = {key: value for key, value in report.items() if key not in ("entries", "index")}
+
+    if report.get("present") and not report.get("ok"):
+        return _json(
+            {
+                **payload,
+                "ok": False,
+                "verdict": "session_mismatch",
+                "reason": "session_index_mismatch",
+                "error": "the session index does not agree with the receipts on disk: "
+                + "; ".join(report.get("problems") or ["unknown mismatch"])
+                + ". Nothing is accepted until the index is rebuilt by zkagent_attest.",
+            }
+        )
+    if params.get("session"):
+        return _verify_session(binary, report, payload, params)
+    return _verify_one(binary, runs, report, payload, params)
+
+
+def _verify_one(binary: str, runs: Sequence[Mapping[str, Any]], report: Mapping[str, Any], payload: dict, params: Mapping[str, Any]) -> str:
+    run_id = int(params.get("run_id", runs[-1]["run_id"]))
+    run = next((r for r in runs if int(r["run_id"]) == run_id), None)
+    if not run:
+        return _json({**payload, "ok": False, "error": f"no attestation with execution_id {run_id}"})
+
+    run_dir = Path(str(run["dir"]))
+    verdict = _verify_receipt(binary, run_dir, params.get("now"))
+    payload = {**payload, **verdict, "execution_id": run_id}
+    if verdict.get("verdict") != "accept":
+        return _json(payload)
+
+    # A receipt that accepts alone but disagrees with the index is not part of the attested
+    # session: say so instead of returning a bare accept.
+    entries = report.get("entries") or []
+    if entries:
+        entry = next((e for e in entries if int(e["execution_id"]) == run_id), None)
+        if entry is None:
+            return _json(
+                {
+                    **payload,
+                    "ok": False,
+                    "verdict": "session_mismatch",
+                    "reason": "receipt_not_indexed",
+                    "error": f"execution_id {run_id} verified alone but {SESSION_FILE} does not list it; "
+                    "the index is stale, so this receipt is not part of the attested session.",
+                }
+            )
+        on_disk = None
+        try:
+            on_disk = json.loads((run_dir / "receipt.json").read_text(encoding="utf-8")).get("trace_root")
+        except (OSError, ValueError):
+            on_disk = None
+        if str(on_disk) != str(entry["trace_root"]):
+            return _json(
+                {
+                    **payload,
+                    "ok": False,
+                    "verdict": "session_mismatch",
+                    "reason": "index_root_mismatch",
+                    "error": f"{SESSION_FILE} lists trace_root {str(entry['trace_root'])[:16]}… for execution_id "
+                    f"{run_id} but the receipt on disk says {str(on_disk)[:16]}…",
+                }
+            )
+
+    return _json(payload)
+
+
+def _verify_session(binary: str, report: Mapping[str, Any], payload: dict, params: Mapping[str, Any]) -> str:
+    if not report.get("present"):
+        return _json(
+            {
+                **payload,
+                "ok": False,
+                "verdict": "no_session",
+                "reason": "session_index_missing",
+                "error": report.get("error") or f"no {SESSION_FILE} to verify",
+            }
+        )
+    root = str(report.get("root") or "")
+    receipts: list[dict] = []
+    for entry in report.get("entries") or []:
+        verdict = _verify_receipt(binary, Path(str(entry["dir"])), params.get("now"))
+        receipts.append(
+            {
+                "execution_id": entry["execution_id"],
+                "verdict": verdict.get("verdict"),
+                "reason": verdict.get("reason"),
+                "exit": verdict.get("exit"),
+            }
+        )
+    accepted = bool(receipts) and all(r["verdict"] == "accept" and r["exit"] == 0 for r in receipts)
+    payload = {
+        **payload,
+        "ok": accepted,
+        "verdict": "accept" if accepted else "reject",
+        "root": root,
+        "total": report.get("total"),
+        "actions": report.get("action_count"),
+        "receipts_verified": receipts,
+    }
+    if not accepted:
+        payload["reason"] = "receipt_rejected"
+        payload["error"] = (
+            "every receipt in the session must accept; at least one did not, so the aggregate is not accepted."
+        )
+        return _json(payload)
+
+    return _json(payload)
 
 
 def tool_disclose(args: Mapping[str, Any] | None = None) -> str:
@@ -675,9 +1056,14 @@ def register(ctx: Any) -> None:
         toolset=TOOLSET,
         schema=_schema(
             "zkagent_verify",
-            "Re-verify the latest (or a named) attestation and return its verdict.",
+            "Verify one receipt (default) or the whole session with `session: true`, cross-check the session "
+            "index against the receipts on disk, and refuse an execution id or session root already accepted.",
             {
                 "run_id": {"type": "integer", "description": "Execution id to verify; defaults to the newest run."},
+                "session": {
+                    "type": "boolean",
+                    "description": "Verify every receipt in session.json plus the Merkle root and the session total.",
+                },
                 "now": {"type": "integer", "description": "Unix time for the future-dating check."},
             },
         ),

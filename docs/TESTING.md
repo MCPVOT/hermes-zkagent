@@ -24,6 +24,10 @@ Neither runs a tool. A plugin can pass both and return nothing useful.
 ZKAGENT_BIN=~/work/zkagent/target/release/zkagent python3 tests/smoke.py
 ```
 
+It runs under a throwaway `HERMES_HOME` (`tempfile.mkdtemp`), so it never clears or races a
+live profile's ledger — a test that deletes `state.json` in the session it is measuring would
+be measuring nothing.
+
 What it asserts, in order:
 
 ```
@@ -33,12 +37,18 @@ attest   verdict accept, 5 actions, total 9, cap 20
 verify   verdict accept
 tamper   one hex character flipped in proof.json -> exit 1, public_input_mismatch
 disclose slot 2 -> a disclosure file that exists and contains a digest
+attest 2 a second batch -> accept, execution_id 1002, total 8
+session  session.json lists both ids, total 17, root == merkle(receipt roots), roots == files
+index    session.json total +1 -> verify(session) -> session_mismatch naming the total
+session  verify(session) -> accept, both receipts accept, root + total match the index
 ```
 
-The tamper case is the one that matters. An attestation that says `accept` proves the happy
-path ran; a tampered proof that still says `accept` proves the plugin is lying. The smoke
-test fails loudly in that case.
+The tamper cases are the ones that matter. An attestation that says `accept` proves the happy
+path ran; a tampered proof that still says `accept` proves the plugin is lying, and a
+`session.json` whose total no longer matches its receipts must fail rather than be reported as
+a warning. The smoke test fails loudly in both cases.
 
+## 3. Does it work where a user will run it?
 ## 3. Does it work where a user will run it?
 
 ```bash
@@ -62,8 +72,8 @@ This is the only step that proves the model can actually see and call the tools.
 - A forged ledger produced by a hostile agent (out of scope; see `SECURITY.md`).
 - Windows and macOS. The code has no platform branch, and `plugin_data_dir()` resolves the
   host home, but the smoke run has only been executed on Linux.
-- Long sessions: batching beyond 8 actions is exercised by the refusal path, not by a
-  50-call session.
+- Long sessions: batching beyond 8 actions is exercised by the two-receipt aggregate, not by
+  a 50-call session.
 
 ## Not a gate: the hook's cost
 

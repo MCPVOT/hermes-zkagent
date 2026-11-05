@@ -25,7 +25,8 @@ Hermes tool call
                ├─ write actions.json    the private witness: target, amount, digest
                ├─ zkagent prove         proof.json, and receipt.json gains the real trace_root
                ├─ zkagent verify --json verdict { accept | reject, reason_code }
-               └─ compact pending.jsonl to the rows beyond the batch
+               ├─ compact pending.jsonl to the rows beyond the batch
+               └─ session.json          rebuilt: ordered receipts, per-receipt totals, total, Merkle root
 ```
 
 `zkagent_verify` re-runs the last step on stored artifacts. `zkagent_disclose` reveals one
@@ -37,6 +38,7 @@ slot's digest plus the three sibling hashes on its path to the root, and nothing
 plugin-data/zkagent-attest/
   state.json          session header: cost table, target map, run history
   pending.jsonl       the ledger: one compact JSON row per tool call, append-only
+  session.json        the index over every receipt: ordered ids, roots, totals, Merkle root
   authority.hex       policy signing key, mode 600, created once
   keys/               circuit-specific proving/verifying keys, mode 700
   runs/run-<id>/      policy.json, receipt.json, actions.json, proof.json, disclosure-<i>.json
@@ -46,6 +48,48 @@ Nothing else is written. The plugin's own install directory is never used for st
 `hermes plugins update` cannot lose it. `state.json` is the header of the session: if it is
 gone, the log beside it is not a ledger, which is what keeps "clear `state.json` to start
 fresh" true.
+
+## The session index
+
+One receipt covers at most 8 actions, so a session is several receipts. `session.json` is the
+claim "these are the receipts, in this order, and together they are the session". It is
+rebuilt from the run history after every attestation, and every field in it is either copied
+from a receipt file or recomputed from those receipts:
+
+```json
+{"version": 1, "updated_at": …, "receipt_count": 2, "action_count": 9, "total": 17,
+ "root": "<merkle>",
+ "merkle": {"hash": "sha256", "leaf": "sha256(trace_root bytes)", "node": "sha256(left || right)",
+            "odd": "promoted unchanged", "empty": "00…00", "order": "ascending execution_id"},
+ "receipts": [{"execution_id": 1001, "trace_root": "…", "total": 9, "actions": 5,
+               "receipt": "runs/run-1001/receipt.json"}, …]}
+```
+
+The Merkle construction, for a verifier re-implementing it:
+
+- leaf = `sha256(bytes.fromhex(trace_root))` — the receipt's 32-byte root
+- node = `sha256(left ‖ right)`, the two children's 32-byte digests, in order
+- an odd node is promoted unchanged to the next level: no duplication, no padding leaf
+- one leaf is the root; no leaves is 64 hex zeros
+- leaves are taken in ascending `execution_id` order, and the list is checked to be in that
+  order, so reordering the receipts changes the root
+
+No signature: the security comes from the receipts, and the index cannot manufacture one.
+`zkagent_verify` therefore treats the index as a claim to be checked, not data to be trusted:
+
+| check | failure |
+|---|---|
+| each listed `trace_root` equals the `trace_root` in the receipt file it names | `session_mismatch` |
+| each listed `total` / `actions` equals the receipt's `total_amount` / `action_count` | `session_mismatch` |
+| the listed execution id equals the receipt's `execution_id` | `session_mismatch` |
+| the sum of the receipts equals the session `total` (and `action_count`) | `session_mismatch` |
+| the stored `root` equals the root recomputed from the listed order | `session_mismatch` |
+| every receipt accepts when the binary verifies it (`{"session": true}`) | `reject` |
+
+Any one of those is a refusal, never a warning, and none of them is recorded as an
+acceptance. A receipt-level verify also requires that the receipt is listed in the index: a
+receipt that accepts alone but is missing from (or disagrees with) the index is
+`session_mismatch`, because it is not part of the attested session.
 
 ## The cost of the hook
 
@@ -89,6 +133,8 @@ it in Python would duplicate the MiMC tree for no benefit.
 | binary missing | `zkagent_status.error` with the install instruction; other tools refuse |
 | `prove` fails (bad witness, format drift) | `{"ok": false, "stage": "prove", ...}` |
 | verify rejects | `ok: false`, `verdict: "reject"`, `reason_code` preserved |
+| `session.json` disagrees with the receipts | `ok: false`, `verdict: "session_mismatch"`, the problems listed; nothing recorded |
+| a receipt accepts but the index omits it | `ok: false`, `verdict: "session_mismatch"`, `reason: "receipt_not_indexed"` |
 | the hook itself throws | swallowed; the tool call is unaffected |
 
 ## What is deliberately absent

@@ -2,9 +2,10 @@
 
     ZKAGENT_BIN=~/work/zkagent/target/release/zkagent python3 tests/smoke.py
 
-Asserts the four things that matter, not just that the code runs: the hook records
-actions, the attestation produces an accepted verdict, a tampered proof is rejected, and a
-disclosure names exactly one slot.
+Asserts the things that matter, not just that the code runs: the hook records actions, the
+attestation produces an accepted verdict, a tampered proof is rejected, a disclosure names
+exactly one slot, and the session index cross-checks against two receipts and rejects a
+tampered total.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import pathlib
 import shutil
 import subprocess
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PLUGIN = os.path.dirname(HERE)
@@ -47,17 +49,23 @@ def main() -> int:
         print("FAIL: no zkagent binary (set ZKAGENT_BIN)")
         return 2
 
-    os.environ.setdefault("HERMES_HOME", os.path.expanduser("~/.hermes/profiles/trilogy-brain"))
+    # A throwaway HERMES_HOME: the test clears a session to start clean, and doing that to a
+    # live profile's ledger would delete real evidence (and race the agent that is writing it).
+    home = tempfile.mkdtemp(prefix="zkagent-smoke-")
+    os.environ["HERMES_HOME"] = home
     module = load()
+    print("home     :", home)
     ctx = FakeCtx()
     module.register(ctx)
 
     assert set(ctx.tools) == {"zkagent_status", "zkagent_attest", "zkagent_verify", "zkagent_disclose"}, sorted(ctx.tools)
     assert "post_tool_call" in ctx.hooks, "hook not registered"
 
-    state = module._state_path()
-    if state.exists():
-        state.unlink()
+    # A fresh session: the same thing a user gets by clearing state.json, plus the files that
+    # belong to a session (the ledger and the index) so the run is repeatable.
+    for path in (module._state_path(), module._pending_path(), module._session_path()):
+        if path.exists():
+            path.unlink()
 
     status = json.loads(ctx.tools["zkagent_status"]({}))
     assert status["binary"], status
@@ -126,6 +134,58 @@ def main() -> int:
     shown = json.loads(pathlib.Path(disclosure["out"]).read_text())
     assert "trace_digest" in json.dumps(shown) or "digest" in json.dumps(shown), shown
     print("disclose : slot 2 ->", os.path.basename(disclosure["out"]), "| recorded tool:", disclosure.get("recorded_tool"))
+
+    # --- a session that outgrows one receipt    # --- a session that outgrows one receipt: the index has to span two -------------------
+    for name, args in [
+        ("read_file", {"path": "/etc/passwd"}),
+        ("terminal", {"command": "date -u"}),
+        ("web_search", {"query": "mimc merkle"}),
+        ("write_file", {"path": "b.txt", "content": "x"}),
+    ]:
+        ctx.hooks["post_tool_call"][0](tool_name=name, args=args, result="ok", task_id="smoke")
+    second = json.loads(ctx.tools["zkagent_attest"]({"max_amount": 20, "ttl_seconds": 600}))
+    assert second.get("verdict") == "accept", second
+    assert second["execution_id"] != attest["execution_id"], (attest, second)
+    print("attest 2 :", second["verdict"], "| actions", second["actions"], "| total", second["total"],
+          "| execution_id", second["execution_id"])
+
+    session_path = module._session_path()
+    assert session_path.is_file(), "no session.json beside the runs"
+    index = json.loads(session_path.read_text(encoding="utf-8"))
+    listed_ids = [row["execution_id"] for row in index["receipts"]]
+    assert listed_ids == [attest["execution_id"], second["execution_id"]], listed_ids
+    assert index["receipt_count"] == 2 and index["action_count"] == 9, index
+    assert index["total"] == 17, index
+    on_disk = []
+    for row in index["receipts"]:
+        receipt = json.loads((module._data_dir() / row["receipt"]).read_text(encoding="utf-8"))
+        assert receipt["trace_root"] == row["trace_root"], row
+        on_disk.append(receipt["trace_root"])
+    assert index["root"] == module._merkle_root(on_disk), index["root"]
+    print("session  :", index["receipt_count"], "receipts | total", index["total"], "| root", index["root"][:16] + "…")
+
+    # --- a tampered index is a hard failure, not a warning --------------------------------
+    original = session_path.read_text(encoding="utf-8")
+    tampered_index = json.loads(original)
+    tampered_index["total"] = int(tampered_index["total"]) + 1
+    session_path.write_text(json.dumps(tampered_index), encoding="utf-8")
+    try:
+        broken = json.loads(ctx.tools["zkagent_verify"]({"session": True}))
+    finally:
+        session_path.write_text(original, encoding="utf-8")
+    assert broken.get("ok") is False and broken.get("verdict") == "session_mismatch", broken
+    assert any("session total" in problem for problem in broken["session"]["problems"]), broken
+    print("index    : tampered total refused |", broken["verdict"], "|",
+          next(p for p in broken["session"]["problems"] if "session total" in p)[:70])
+
+    # --- the aggregate: every receipt accepts, roots match, total adds up -----------------
+    aggregate = json.loads(ctx.tools["zkagent_verify"]({"session": True}))
+    assert aggregate.get("verdict") == "accept", aggregate
+    assert aggregate["root"] == index["root"], aggregate
+    assert aggregate["total"] == index["total"] and aggregate["actions"] == 9, aggregate
+    assert [row["verdict"] for row in aggregate["receipts_verified"]] == ["accept", "accept"], aggregate
+    print("session  : aggregate", aggregate["verdict"], "| receipts",
+          len(aggregate["receipts_verified"]), "| total", aggregate["total"])
 
     print("OK")
     return 0

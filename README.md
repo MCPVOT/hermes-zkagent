@@ -31,13 +31,46 @@ agent works ──▶ tool calls recorded ──▶ policy signed ──▶ Grot
 
 | Tool | What it does |
 |---|---|
-| `zkagent_status` | Which zkagent binary is in use, how many actions are pending, the last attestation |
-| `zkagent_attest` | Sign a policy cap, prove the session inside it, return the verdict |
-| `zkagent_verify` | Re-verify an attestation (`accept` / `reject`, machine-readable) |
+| `zkagent_status` | Which zkagent binary is in use, how many actions are pending, the last attestation, the session index |
+| `zkagent_attest` | Sign a policy cap, prove the session inside it, add the receipt to `session.json` |
+| `zkagent_verify` | Verify one receipt, or the whole session with `{"session": true}` |
 | `zkagent_disclose` | Reveal one action's digest plus its inclusion path |
 
 Plus a `post_tool_call` hook: it records every tool call automatically, so the ledger fills
 while the agent works and `zkagent_attest` is a single call at the end.
+
+## Sessions longer than one receipt
+
+The circuit has 8 action slots, so a real session produces several receipts. Each one stands
+on its own; `session.json`, written beside `runs/` after every attestation, is the index that
+ties them together:
+
+```json
+{
+  "total": 17, "receipt_count": 2, "action_count": 9,
+  "root": "59fbac56…",
+  "receipts": [
+    {"execution_id": 1001, "trace_root": "b33e6278…", "total": 9, "actions": 5, "receipt": "runs/run-1001/receipt.json"},
+    {"execution_id": 1002, "trace_root": "caec5dd7…", "total": 8, "actions": 4, "receipt": "runs/run-1002/receipt.json"}
+  ]
+}
+```
+
+`root` is a sha256 binary tree over the ordered receipt roots: leaf =
+`sha256(trace_root bytes)`, node = `sha256(left ‖ right)`, an odd node is promoted unchanged,
+and an empty session is 64 zeros — small enough to re-implement from that sentence. It
+carries no signature, and needs none: every field is either copied from a receipt or
+recomputed from the receipts, so `zkagent_verify` re-checks the listed roots against the
+receipt files on disk, each per-receipt total against its `total_amount`, and their sum
+against the session total. **Any disagreement is a hard failure**, not a warning: a
+`session_mismatch` verdict means the index and the evidence do not describe the same session,
+and nothing is accepted until the index is rebuilt.
+
+```
+zkagent_verify {"session": true}    # every receipt accepts, roots match, totals add up, one root
+```
+
+## Why this is a plugin and not a skill
 
 ## Why this is a plugin and not a skill
 
@@ -60,7 +93,8 @@ faked, and the proof is the part that cannot be forged.
 ```
 zkagent_status {}
 zkagent_attest {"max_amount": 20}
-zkagent_verify {}
+zkagent_verify {}                    # one receipt
+zkagent_verify {"session": true}     # every receipt in session.json, plus the Merkle root
 zkagent_disclose {"index": 2}
 ```
 
@@ -96,7 +130,8 @@ hook. It proves the recorded set is consistent with the receipt and inside the p
 ## What it does to your machine
 
 - runs `zkagent` as a subprocess (`setup`, `policy`, `prove`, `verify`, `disclose`)
-- writes under `plugin-data/zkagent-attest/` only: keys, policies, receipts, proofs, state
+- writes under `plugin-data/zkagent-attest/` only: keys, policies, receipts, proofs, the
+  session index, state
 - a `post_tool_call` hook that appends one JSON row per tool call and never raises
 - no network calls, no credential reads, no auto-updater, no shell outside `zkagent`
 
@@ -105,6 +140,8 @@ hook. It proves the recorded set is consistent with the receipt and inside the p
 - One trusted setup per install, single-party, development-grade. Not a ceremony.
 - 8 actions per receipt, by circuit design.
 - The ledger is per profile and survives updates; clear `state.json` to start a fresh one.
+- `session.json` is an index, not a proof: it is only as good as the receipts under `runs/`,
+  which is exactly why `zkagent_verify` re-reads them instead of trusting it.
 - `chain_id` is carried through the receipt, not enforced against a network.
 
 ## Licence
