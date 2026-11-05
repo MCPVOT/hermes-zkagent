@@ -11,7 +11,15 @@ of them, you reveal exactly one, with the Merkle path that places it in the atte
 [Architecture](docs/ARCHITECTURE.md) (data flow, files, failure modes) ·
 [Security](SECURITY.md) (threat model, what a receipt is worth) ·
 [Testing](docs/TESTING.md) (the three gates) ·
+[How it gets used](docs/WORKFLOW.md) ·
 [Agents](AGENTS.md) (instructions for an agent working on this repo).
+
+## Install
+
+```bash
+hermes plugins install MCPVOT/hermes-zkagent     # then: hermes plugins enable zkagent-attest
+python3 scripts/check.py                         # secrets, binaries, manifest, smoke, hermes gates
+```
 
 ```
 agent works ──▶ tool calls recorded ──▶ policy signed ──▶ Groth16 proof ──▶ ACCEPT / REJECT
