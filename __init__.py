@@ -272,7 +272,17 @@ def _append_row(row: Mapping[str, Any]) -> None:
 
 
 def _start_session(state: dict) -> None:
-    """A recorded call with no state.json begins a session: drop the old log, write the header."""
+    """The first recorded call of a session: claim the header, then start a clean log.
+
+    The header is claimed with O_EXCL, so two processes starting at the same moment cannot
+    each truncate the other's rows: the loser re-reads the winner's header and appends to
+    the log that already exists.
+    """
+    try:
+        os.close(os.open(_state_path(), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+    except FileExistsError:
+        _cache_params(_load_state())
+        return
     _write_ledger([])
     _save_state(state)
 
