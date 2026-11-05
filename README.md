@@ -90,6 +90,16 @@ A skill can tell the model to write a receipt. It cannot fire on every tool call
 cannot make the receipt verifiable by a third party. The hook is the part that cannot be
 faked, and the proof is the part that cannot be forged.
 
+## The Desktop pane
+
+A read-only view of the last attestation at `/api/plugins/zkagent-attest/`: verdict and
+reason, action count, total against the cap, execution id, the trace root with a copy
+button, and a slot picker that reports whether that one disclosure path verifies.
+
+The small backend (`dashboard/plugin_api.py`) exists because the desktop SDK has no file
+bridge to `plugin-data/`, where the runs live; it re-runs `zkagent verify` on each load, so
+the badge is a check rather than a cached claim. One verification, about 11 ms.
+
 ## Requirements
 
 - **zkagent**, the CLI (Rust). Point `ZKAGENT_BIN` at a build, put `zkagent` on `PATH`, or
