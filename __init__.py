@@ -105,6 +105,70 @@ def _seen_path() -> Path:
     return _data_dir() / SEEN_FILE
 
 
+# The host's `register(ctx)` handle, kept so the cost table can be read from the host's own
+# settings (`plugins.entries.zkagent-attest.settings.<tool>`). `ctx.get_config` is the only
+# supported reader; there is no module-level API for it, so the ctx is stashed at register.
+_CTX: Any = None
+_HOST_COSTS: dict[str, int] | None | object = _UNSET
+
+
+def _read_host_costs() -> dict[str, int] | None:
+    """The cost table from the host config, or None when the host exposes no such setting.
+
+    Two ways in, in order:
+      1. `ctx.get_config(key)` on the context `register()` received — the documented API;
+      2. a direct read of `plugins.entries.<id>.settings` via `hermes_cli`, for a reloaded
+         module whose `register()` ran before the ctx was stored (or a test harness that
+         never registers).
+    Both are best-effort. Honest fallback: when neither yields a value (Hermes without the
+    settings API, a hand-run module, a profile with no entry for this plugin), the caller
+    keeps state.json's `costs` and then DEFAULT_COSTS. Nothing here raises: a broken host
+    config must not stop the ledger from recording.
+    """
+    found: dict[str, Any] = {}
+    ctx = _CTX
+    if ctx is not None:
+        for key in DEFAULT_COSTS:
+            try:
+                value = ctx.get_config(key, None)
+            except Exception:
+                value = None
+            if value is not None:
+                found[key] = value
+    if not found:
+        try:
+            from hermes_cli.config import load_config_readonly
+            from hermes_cli.plugins_state import _plugin_settings_entry
+
+            entry = _plugin_settings_entry(load_config_readonly() or {}, PLUGIN_NAME) or {}
+            settings = entry.get("settings")
+            if isinstance(settings, Mapping):
+                keys = set(DEFAULT_COSTS) | {str(k) for k in settings}
+                for key in keys:
+                    if key in settings:
+                        found[key] = settings[key]
+        except Exception:
+            pass
+    clean: dict[str, int] = {}
+    for key, value in found.items():
+        try:
+            price = int(value)
+        except (TypeError, ValueError):
+            continue  # a non-numeric setting is ignored, not fatal
+        if price >= 0:
+            clean[str(key)] = price
+    return clean or None
+
+
+def _host_costs() -> dict[str, int] | None:
+    """Read the host settings once per process: the cost table changes between sessions, not
+    between two tool calls, and the hook's path must stay a dict lookup."""
+    global _HOST_COSTS
+    if _HOST_COSTS is _UNSET:
+        _HOST_COSTS = _read_host_costs()
+    return _HOST_COSTS  # type: ignore[return-value]
+
+
 def _signature(path: Path) -> tuple[int, int, int] | None:
     """Cheap "did this change" token: mtime, size and inode (an atomic replace is a new inode)."""
     try:
@@ -137,8 +201,17 @@ def _save_state(state: dict) -> None:
 
 
 def _costs_and_targets(state: Mapping[str, Any]) -> tuple[dict, dict]:
+    """Cost table precedence: DEFAULT_COSTS < state.json `costs` < host settings.
+
+    The host config wins per key because it is the surface the Desktop settings form writes;
+    state.json's `costs` still applies for keys the host does not set, and on a host that
+    exposes no setting at all it is the whole table. See `_read_host_costs` for why the host
+    read can legitimately return nothing.
+    """
     costs = dict(DEFAULT_COSTS)
     costs.update(state.get("costs") or {})
+    host = _host_costs() or {}
+    costs.update(host)
     return costs, dict(state.get("targets") or {})
 
 
@@ -683,6 +756,15 @@ def tool_status(args: Mapping[str, Any] | None = None) -> str:
         "slots_per_receipt": MAX_ACTIONS,
         "runs": len(runs),
         "last_run": runs[-1] if runs else None,
+        "settings": {
+            "costs_source": "host config (plugins.entries settings)" if _host_costs() else "state.json costs, else DEFAULT_COSTS",
+            "costs": _costs(),
+        },
+        "replay_guard": {
+            "file": str(_seen_path()),
+            "accepted_executions": len(seen["executions"]),
+            "accepted_sessions": len(seen["sessions"]),
+        },
     }
     if error:
         payload["error"] = error
@@ -1166,7 +1248,10 @@ def _schema(name: str, description: str, properties: Mapping[str, Any], required
 
 
 def register(ctx: Any) -> None:
-    """Wire the tools and the ledger hook into the host."""
+    """Wire the tools and the ledger hook into the host, and keep the ctx for settings reads."""
+    global _CTX, _HOST_COSTS
+    _CTX = ctx  # see `_read_host_costs`: the only supported way to read the host's settings
+    _HOST_COSTS = _UNSET  # a fresh context may mean a fresh config
     ctx.register_tool(
         name="zkagent_status",
         toolset=TOOLSET,

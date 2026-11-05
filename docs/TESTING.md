@@ -31,6 +31,7 @@ be measuring nothing.
 What it asserts, in order:
 
 ```
+config   plugin.yaml config_schema defaults == DEFAULT_COSTS (all 7 keys)
 status   binary resolved, version/format/commit printed
 hook     5 tool calls recorded -> pending == 5
 attest   verdict accept, 5 actions, total 9, cap 20

@@ -15,6 +15,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -67,6 +68,17 @@ def main() -> int:
     for path in (module._state_path(), module._pending_path(), module._session_path(), module._seen_path()):
         if path.exists():
             path.unlink()
+
+    # The manifest's cost defaults are the settings form's numbers; they must be the same
+    # numbers DEFAULT_COSTS charges, or the form quotes one price and the ledger bills another.
+    manifest = pathlib.Path(PLUGIN, "plugin.yaml").read_text(encoding="utf-8")
+    schema_block = manifest.split("config_schema:", 1)[1]
+    declared = {
+        match.group(1): int(match.group(2))
+        for match in re.finditer(r"^  (\w+):\n    type: int\n    default: (\d+)", schema_block, re.M)
+    }
+    assert declared == module.DEFAULT_COSTS, (declared, module.DEFAULT_COSTS)
+    print("config   : plugin.yaml defaults match DEFAULT_COSTS |", len(declared), "keys")
 
     status = json.loads(ctx.tools["zkagent_status"]({}))
     assert status["binary"], status

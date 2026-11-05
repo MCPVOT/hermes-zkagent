@@ -122,9 +122,14 @@ visible, and it is editable without reinstalling:
 {"read_file": 1, "write_file": 2, "patch": 2, "terminal": 3, "web_search": 2, "web_extract": 3, "browser_exec": 3}
 ```
 
-Stored under `plugin-data/zkagent-attest/state.json` as `costs`. The caps in
-`zkagent_attest` are in the same units: `max_amount` is the session total, `max_per_action`
-the most expensive single call.
+The numbers are declared in `plugin.yaml` as `config_schema`, so the host renders them as
+settings under `plugins.entries.zkagent-attest.settings` (the Desktop Plugins tab writes the
+same place), and the defaults there are exactly `DEFAULT_COSTS` in `__init__.py`. Read
+precedence, stated because it is observable: host settings > `state.json` `costs` >
+`DEFAULT_COSTS`. The plugin reads the host settings through `ctx.get_config` and falls back
+to `state.json` when the host exposes no value (an older Hermes, or a hand-run module); on
+such a host, editing `state.json` still works. The caps in `zkagent_attest` are in the same
+units: `max_amount` is the session total, `max_per_action` the most expensive single call.
 
 ## Privacy, precisely
 
