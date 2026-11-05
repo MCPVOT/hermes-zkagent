@@ -40,8 +40,23 @@ DEFAULT_COSTS = {
 
 # --------------------------------------------------------------------------- state
 
+# The ledger is two files. `state.json` is the session header — cost table, target map, run
+# history — and is written only when one of those changes. `pending.jsonl` is one compact
+# JSON row per tool call, appended with a single O_APPEND write. `post_tool_call` runs on
+# every tool call the agent makes, so its path is "append a line", not "read 28 KB, modify,
+# rewrite 28 KB". Deleting state.json still means "start a fresh session": a ledger without
+# a header is not a ledger, and the next recorded call truncates it.
 
-def _data_dir() -> Path:
+PENDING_FILE = "pending.jsonl"
+_UNSET = object()
+
+# Cost table and target map, rebuilt from state.json only when its signature changes. A cache
+# and nothing more: a reloaded module, or a second session on the same profile, rebuilds it
+# from disk, so nothing here can go missing when the process goes away.
+_PARAMS: dict[str, Any] = {"sig": _UNSET, "costs": dict(DEFAULT_COSTS), "targets": {}}
+
+
+def _resolve_data_dir() -> Path:
     """The plugin's own persistent directory (survives updates and removal)."""
     try:
         from plugins.plugin_storage import plugin_data_dir
@@ -54,8 +69,36 @@ def _data_dir() -> Path:
         return root
 
 
+_DATA_DIR: Path | None = None
+
+
+def _data_dir() -> Path:
+    """Resolved once per process: the host resolves a profile at startup and does not move it.
+
+    Resolving it per call is not free — the `plugins.plugin_storage` import raises and is
+    caught on every path, which costs more than the rest of the hook.
+    """
+    global _DATA_DIR
+    if _DATA_DIR is None:
+        _DATA_DIR = _resolve_data_dir()
+    return _DATA_DIR
+
+
 def _state_path() -> Path:
     return _data_dir() / "state.json"
+
+
+def _pending_path() -> Path:
+    return _data_dir() / PENDING_FILE
+
+
+def _signature(path: Path) -> tuple[int, int, int] | None:
+    """Cheap "did this change" token: mtime, size and inode (an atomic replace is a new inode)."""
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return None
+    return (stat.st_mtime_ns, stat.st_size, stat.st_ino)
 
 
 def _load_state() -> dict:
@@ -67,6 +110,8 @@ def _load_state() -> dict:
     state.setdefault("runs", [])
     state.setdefault("next_run", 1)
     state.setdefault("next_run_id", 1001)
+    if "pending" in state:
+        _migrate_pending(state)
     return state
 
 
@@ -75,14 +120,42 @@ def _save_state(state: dict) -> None:
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
     os.replace(tmp, path)
+    _cache_params(state)
+
+
+def _costs_and_targets(state: Mapping[str, Any]) -> tuple[dict, dict]:
+    costs = dict(DEFAULT_COSTS)
+    costs.update(state.get("costs") or {})
+    return costs, dict(state.get("targets") or {})
+
+
+def _cache_params(state: Mapping[str, Any]) -> None:
+    costs, targets = _costs_and_targets(state)
+    _PARAMS["sig"] = _signature(_state_path())
+    _PARAMS["costs"] = costs
+    _PARAMS["targets"] = targets
+
+
+def _params(create: bool = False) -> tuple[dict, dict]:
+    """Cost table and target map, re-read only when state.json changes on disk.
+
+    `create` is the hook's call: recording a call with no state.json starts the session, the
+    same reset the README documents as "clear state.json".
+    """
+    sig = _signature(_state_path())
+    if sig is not None and _PARAMS["sig"] == sig:
+        return _PARAMS["costs"], _PARAMS["targets"]
+    state = _load_state()
+    if sig is None and create:
+        _start_session(state)
+        return _PARAMS["costs"], _PARAMS["targets"]
+    _cache_params(state)
+    return _PARAMS["costs"], _PARAMS["targets"]
 
 
 def _costs() -> dict:
     """Cost table: the state file wins, so a user can edit it without reinstalling."""
-    state = _load_state()
-    costs = dict(DEFAULT_COSTS)
-    costs.update(state.get("costs") or {})
-    return costs
+    return _params()[0]
 
 
 # ------------------------------------------------------------------------- binary
@@ -137,27 +210,127 @@ def _digest(args: Mapping[str, Any]) -> int:
     return int.from_bytes(raw[:8], "big") & ((1 << 63) - 1)
 
 
+def _row_line(row: Mapping[str, Any]) -> bytes:
+    return (json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+
+
+def _read_rows() -> list[dict]:
+    """Parse the ledger, dropping a torn final line (a process killed mid-write)."""
+    try:
+        text = _pending_path().read_text(encoding="utf-8")
+    except OSError:
+        return []
+    rows: list[dict] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
+def _pending(state: Mapping[str, Any] | None = None) -> list[dict]:
+    """The pending actions. No state.json means no session, so a stale log is not a ledger.
+
+    Passing the `state` the caller already loaded skips a second read; the standalone call
+    exists so a 0.1.0 ledger (rows inline in state.json) is migrated before it is read.
+    """
+    if not _state_path().exists():
+        return []
+    if state is None:
+        _load_state()
+    return _read_rows()
+
+
+def _write_ledger(rows: list[dict]) -> None:
+    path = _pending_path()
+    if not rows:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        return
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "wb") as handle:
+        for row in rows:
+            handle.write(_row_line(row))
+    os.replace(tmp, path)
+
+
+def _append_row(row: Mapping[str, Any]) -> None:
+    """One append: no read, no rewrite. O_APPEND makes the row land atomically."""
+    fd = os.open(_pending_path(), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    try:
+        os.write(fd, _row_line(row))
+    finally:
+        os.close(fd)
+
+
+def _start_session(state: dict) -> None:
+    """A recorded call with no state.json begins a session: drop the old log, write the header."""
+    _write_ledger([])
+    _save_state(state)
+
+
+def _compact(consumed: int) -> list[dict]:
+    """Drop the rows a receipt consumed; keep anything appended while it was being proven."""
+    remaining = _read_rows()[consumed:]
+    _write_ledger(remaining)
+    return remaining
+
+
+def _migrate_pending(state: dict) -> None:
+    """0.1.0 kept the ledger inside state.json; move those rows to the append-only file once."""
+    legacy = state.get("pending")
+    rows = [row for row in legacy if isinstance(row, dict)] if isinstance(legacy, list) else []
+    existing = _read_rows()
+    try:
+        _write_ledger(rows + existing)
+    except OSError:
+        return
+    state.pop("pending", None)
+    try:
+        _save_state(state)
+    except OSError:
+        state["pending"] = rows  # state.json stays authoritative; do not duplicate the rows
+        try:
+            _write_ledger(existing)
+        except OSError:
+            pass
+
+
+def _target_id(tool_name: str, targets: dict) -> int:
+    """The tool's slot in the policy allow-list; a new tool takes the next id, once."""
+    target = targets.get(tool_name)
+    if target is not None:
+        return int(target)
+    state = _load_state()
+    current = state.setdefault("targets", {})
+    if tool_name not in current:
+        current[tool_name] = len(current) + 1
+        _save_state(state)
+    return int(current[tool_name])
+
+
 def _record(tool_name: str, args: Mapping[str, Any]) -> None:
     """Append one action to the pending log. Never raises: a hook must not break a call."""
     if not tool_name or tool_name.startswith("zkagent_"):
         return
-    costs = _costs()
-    amount = int(costs.get(tool_name, 1))
-    state = _load_state()
-    pending = state.setdefault("pending", [])
-    targets = state.setdefault("targets", {})
-    if tool_name not in targets:
-        targets[tool_name] = len(targets) + 1
-    pending.append(
+    costs, targets = _params(create=True)
+    _append_row(
         {
             "tool": tool_name,
-            "target": int(targets[tool_name]),
-            "amount": amount,
+            "target": _target_id(tool_name, targets),
+            "amount": int(costs.get(tool_name, 1)),
             "trace_digest": _digest(args),
             "at": int(time.time()),
         }
     )
-    _save_state(state)
 
 
 def _on_post_tool_call(tool_name: str, args: Any = None, result: Any = None, task_id: Any = None, **_: Any) -> None:
@@ -187,7 +360,7 @@ def _need_binary() -> tuple[str | None, str | None]:
 def tool_status(args: Mapping[str, Any] | None = None) -> str:
     binary, error = _need_binary()
     state = _load_state()
-    pending = state.get("pending") or []
+    pending = _pending(state)
     runs = state.get("runs") or []
     payload: dict[str, Any] = {
         "plugin": PLUGIN_NAME,
@@ -231,12 +404,11 @@ def tool_attest(args: Mapping[str, Any] | None = None) -> str:
         return _json({"ok": False, "error": error})
 
     state = _load_state()
-    pending = list(state.get("pending") or [])
+    pending = _pending(state)
     if not pending:
         return _json({"ok": False, "error": "nothing to attest yet: no tool calls recorded, and the session is empty."})
 
     batch = pending[:MAX_ACTIONS]
-    remaining = pending[MAX_ACTIONS:]
     total = sum(int(a["amount"]) for a in batch)
     count = len(batch)
 
@@ -356,9 +528,12 @@ def tool_attest(args: Mapping[str, Any] | None = None) -> str:
         "trace_root": receipt.get("trace_root"),
         "tools": [a["tool"] for a in batch],
     }
-    state["pending"] = remaining
-    state.setdefault("runs", []).append(run)
+    state["runs"] = state.get("runs") or []
+    state["runs"].append(run)
     state["next_run_id"] = run_id + 1
+    # Consume the rows before recording the run: a failure here leaves the ledger untouched and
+    # the attestation retryable, instead of a receipt whose actions are still pending.
+    remaining = _compact(count)
     _save_state(state)
 
     return _json(
