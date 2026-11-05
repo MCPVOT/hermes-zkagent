@@ -1,0 +1,10 @@
+{
+  "name": "zkagent-attest",
+  "label": "zkagent",
+  "description": "Read-only attestation state for the Desktop pane: the last receipt, its verdict, and one disclosed action's inclusion path",
+  "version": "0.2.0",
+  "api": "plugin_api.py",
+  "tab": {
+    "hidden": true
+  }
+}

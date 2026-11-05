@@ -39,6 +39,42 @@ agent works ──▶ tool calls recorded ──▶ policy signed ──▶ Grot
 Plus a `post_tool_call` hook: it records every tool call automatically, so the ledger fills
 while the agent works and `zkagent_attest` is a single call at the end.
 
+Plus a **Desktop pane** (`desktop/plugin.js`): the last attestation, read-only.
+
+## The Desktop pane
+
+Hermes Desktop loads `desktop/plugin.js` as the desktop half of this package — no build step,
+no Tauri app, one plain ESM file. It registers a **zkagent receipt** pane you dock anywhere:
+
+| What it shows | Where it comes from |
+|---|---|
+| verdict (ACCEPT / REJECT) with the run's reason | `state.json` run header |
+| live re-check: verdict + machine-readable `reason_code` | `zkagent verify --json`, run on display |
+| actions (`n of 8 slots`), total against the cap, execution id, completion time | `runs/run-<id>/receipt.json` |
+| the trace root, truncated, with a copy action | the receipt's `trace_root` |
+| one slot's disclosed digest and whether its inclusion path verifies | `runs/run-<id>/disclosure-<i>.json`, checked by the binary |
+
+Two things worth knowing:
+
+- **It writes nothing.** No route calls `attest` or `disclose`, creates no directory, and never
+  edits the ledger. A slot without a `disclosure-<i>.json` says so and names the
+  `zkagent_disclose` call that would create one, instead of disclosing on your behalf.
+- **The verdict and the re-check are different claims.** The badge is what the attestation
+  decided; the "re-checked now" line is `zkagent verify` re-run against the stored artifacts,
+  which is also the only place a `reason_code` exists. An old receipt whose policy has since
+  expired re-checks as REJECT even though it was accepted when it was made — both are shown.
+
+Why a small Python backend: the pane reads through `ctx.rest` into
+`dashboard/plugin_api.py` (mounted at `/api/plugins/zkagent-attest/`), because the SDK's file
+door (`ctx.files`) is scoped to the folder the app owns for the plugin and refuses Hermes'
+own data — `plugin-data/` is unreachable from the renderer by design. The backend runs in the
+gateway beside the tools that wrote the files, and answers only `GET /latest` and
+`GET /disclosure?index=N`.
+
+Enable it in **Capabilities → Plugins** (a package's desktop half ships opt-in), and make
+sure the plugin is in `plugins.enabled` in `config.yaml` — the Python backend is imported
+under that gate, and `ctx.rest` returns 404 without it.
+
 ## Why this is a plugin and not a skill
 
 A skill can tell the model to write a receipt. It cannot fire on every tool call, and it
@@ -99,6 +135,10 @@ hook. It proves the recorded set is consistent with the receipt and inside the p
 - writes under `plugin-data/zkagent-attest/` only: keys, policies, receipts, proofs, state
 - a `post_tool_call` hook that appends one JSON row per tool call and never raises
 - no network calls, no credential reads, no auto-updater, no shell outside `zkagent`
+- with the Desktop half loaded: two read-only routes on the gateway's plugin namespace
+  (`GET /api/plugins/zkagent-attest/latest`, `GET …/disclosure?index=N`). They write nothing;
+  the only process they start is `zkagent verify` (no `--seen` file), once per pane load or
+  slot selection, so showing a receipt costs one proof verification
 
 ## Limitations, stated
 

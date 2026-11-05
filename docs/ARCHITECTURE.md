@@ -47,6 +47,23 @@ Nothing else is written. The plugin's own install directory is never used for st
 gone, the log beside it is not a ledger, which is what keeps "clear `state.json` to start
 fresh" true.
 
+## Who reads it, and from where
+
+Two surfaces read that directory and neither writes it:
+
+- the four tools, in the agent turn;
+- the Desktop pane, through `desktop/plugin.js` → `ctx.rest` → `dashboard/plugin_api.py`.
+
+The pane cannot read the directory itself, and this is a property of the SDK, not an
+oversight: `ctx.files` gives a plugin its own app-side data folder plus folders the user
+grants through a picker, and refuses Hermes' own data outright, so `plugin-data/` is not
+reachable from the renderer. The backend runs in the gateway process — beside the code that
+wrote the files — and answers two GETs (`/latest`, `/disclosure?index=N`). It resolves the
+data directory without creating it, reads `state.json` and `runs/run-<id>/`, and re-runs
+`zkagent verify` (stateless: no `--seen` file) to publish the `reason_code` the run header
+does not keep. A run directory recorded in `state.json` is only used when it really sits
+under this plugin's `runs/`, so a doctored header cannot turn the route into a file reader.
+
 ## The cost of the hook
 
 `post_tool_call` runs synchronously on every tool call the agent makes, so its per-call cost

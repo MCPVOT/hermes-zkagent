@@ -1,5 +1,5 @@
 name: zkagent-attest
-version: 0.1.0
+version: 0.2.0
 description: "Verifiable receipts for what an agent actually did: records each tool call, proves the session stayed inside a signed policy cap without revealing which tools ran, and discloses exactly one action on request. Drives the zkagent CLI (Groth16)."
 author: MCPVOT
 license: MIT
@@ -11,3 +11,9 @@ provides_tools:
 provides_hooks:
   - post_tool_call
 requires_hermes: ">=0.22.5"
+# The Desktop surface needs no key here: `desktop/plugin.js` is the pane and
+# `dashboard/plugin_api.py` (declared in `dashboard/manifest.json`) is the read-only route it
+# draws from. `hermes plugins validate` finds both by their paths — `desktop/plugin.js` is one
+# of the loadable entrypoints it names, and the pane itself is linted by the desktop-surface
+# check. There is no `desktop:` field in the manifest schema; adding one would only log an
+# "unknown plugin.yaml field" warning at load.
