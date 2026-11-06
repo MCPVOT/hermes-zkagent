@@ -9,6 +9,37 @@ of them, you reveal exactly one, with the Merkle path that places it in the atte
 
 Installs in one command, fetches its pinned `zkagent` binary itself on first use (sha256 checked), and makes no network calls of its own.
 
+## Try it in 60 seconds
+
+```bash
+python3 scripts/install-zkagent.py                 # pinned v0.3.1+2026-11-05, sha256 verified
+hermes plugins install MCPVOT/hermes-zkagent       # then: hermes plugins enable zkagent-attest
+# start a NEW Hermes session: the hook reloads now, the four tools load at session start
+#   zkagent_status {}                  -> which binary, how many actions are pending
+#   zkagent_attest {"max_amount": 20}  -> accept, with the total measured against the cap
+#   zkagent_verify {}                  -> accept, or a refusal with a stable reason code
+```
+
+The same mechanism without Hermes, deterministically, in about 20 seconds:
+
+```bash
+python3 tests/smoke.py
+# hook: 5 actions recorded  ->  attest: accept (total 9, cap 20)  ->  verify: accept
+# tamper: rejected, reason_code public_input_mismatch
+# disclose: slot 2 -> web_search   |   replay: refused
+```
+
+## Measured, not asserted
+
+| | |
+|---|---|
+| circuit | 7,442 constraints, 16 public inputs, BN254/Groth16 |
+| prove | ~437 ms median for one 8-slot batch |
+| verify | ~11 ms, stateless |
+| proof artifact | 128 B compressed, 2.3 KB as the CLI's JSON with its public inputs |
+| receipt | 199 B: totals, action count, time, chain, execution id, trace root |
+| tests | 153 across the CLI repo, including the negative controls (over-cap, expired, tampered, wrong key) |
+
 **Read next:** [Constitution](CONSTITUTION.md) (the eight non-negotiables) ·
 [Architecture](docs/ARCHITECTURE.md) (data flow, files, failure modes) ·
 [Security](SECURITY.md) (threat model, what a receipt is worth) ·
