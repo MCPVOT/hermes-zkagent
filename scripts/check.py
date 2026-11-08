@@ -139,6 +139,29 @@ def check_smoke(result: Result, binary: str | None) -> None:
     result.add("smoke test", code == 0 and "OK" in out, tail[:90])
 
 
+
+def check_version(result: Result) -> None:
+    """The plugin version, the README badge and the changelog must agree.
+
+    Three places state the same number and nothing tied them together: a release could bump
+    plugin.yaml alone and the README would keep advertising the previous version, which is exactly
+    what a reviewer reads first.
+    """
+    import re as _re
+
+    root = ROOT
+    manifest = _re.search(r"^version:\s*(\S+)", (root / "plugin.yaml").read_text(encoding="utf-8"), _re.M)
+    changelog = _re.search(r"^## (\d+\.\d+\.\d+)$", (root / "CHANGELOG.md").read_text(encoding="utf-8"), _re.M)
+    badge = _re.search(r"plugin-(\d+\.\d+\.\d+)-blue", (root / "README.md").read_text(encoding="utf-8"))
+    if not (manifest and changelog and badge):
+        result.add("version consistency", False, "plugin.yaml, README badge or CHANGELOG.md missing a version")
+        return
+    versions = {"plugin.yaml": manifest.group(1).strip('"'), "CHANGELOG.md": changelog.group(1),
+                "README.md": badge.group(1)}
+    ok = len(set(versions.values())) == 1
+    detail = " · ".join(f"{k} {v}" for k, v in versions.items())
+    result.add("version consistency", ok, detail)
+
 def check_guard_tests(result: Result) -> None:
     """Failure-path guards. No binary needed, so this gate can never be skipped."""
     code, out = run([sys.executable, str(ROOT / "tests" / "test_guards.py")], timeout=300)
@@ -176,6 +199,7 @@ def main() -> int:
     check_no_binaries(result)
     check_manifest_matches_code(result)
     check_docs(result)
+    check_version(result)
     check_guard_tests(result)
     check_smoke(result, None if args.no_binary else args.binary)
     check_hermes_gates(result)
