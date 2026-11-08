@@ -33,6 +33,9 @@ def show(payload: dict, keys: tuple[str, ...]) -> None:
     time.sleep(PAUSE)
 
 
+FONT = {'V': ('█ █', '█ █', ' ▀ '), 'E': ('█▀▀', '█▀ ', '▀▀▀'), 'R': ('█▀▄', '█▀▄', '▀ ▀'), 'I': ('▀█▀', ' █ ', '▀▀▀'), 'F': ('█▀▀', '█▀ ', '▀  '), 'A': ('▄▀▄', '█▀█', '▀ ▀'), 'B': ('█▀▄', '█▀▄', '▀▀ '), 'L': ('█  ', '█  ', '▀▀▀'), 'C': ('█▀▀', '█  ', '▀▀▀'), 'P': ('█▀▄', '█▀ ', '▀  '), 'T': ('▀█▀', ' █ ', ' ▀ '), 'S': ('█▀▀', '▀▀█', '▀▀▀'), ' ': ('   ', '   ', '   ')}
+
+
 def main() -> int:
     os.environ["HERMES_HOME"] = tempfile.mkdtemp(prefix="demo-take-")
     spec = importlib.util.spec_from_file_location("zk", ROOT / "__init__.py")
@@ -64,6 +67,16 @@ def main() -> int:
     print("\033[2m           zkagent 0.3.1 · format 3 · 7,442 constraints · proof 2,326 B\033[0m")
     print()
     import textwrap
+
+    phrase = "VERIFIABLE RECEIPTS"
+    rows = ["", "", ""]
+    for ch in phrase:
+        glyph = FONT.get(ch, FONT[" "])
+        for i in range(3):
+            rows[i] += glyph[i] + " "
+    print("\033[36m" + "\n".join("  " + row.rstrip() for row in rows) + "\033[0m")
+    print()
+    time.sleep(PAUSE)
 
     blurb = (
         "An agent acts on your behalf: it calls tools, spends budget, touches your data. "
