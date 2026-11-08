@@ -64,7 +64,7 @@ def main() -> int:
 """
     print("\033[1;36m" + banner + "\033[0m", end="")
     print("\033[1m           verifiable receipts for what an agent did\033[0m")
-    print("\033[2m           zkagent 0.3.1 · format 3 · 7,442 constraints · proof 2,326 B\033[0m")
+    print("\033[2m           zkagent 0.4.0 · format 3 · 7,442 constraints · proof ≈2.3 kB\033[0m")
     print()
     import textwrap
 
