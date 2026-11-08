@@ -9,10 +9,22 @@ of them, you reveal exactly one, with the Merkle path that places it in the atte
 
 Installs in one command, fetches its pinned `zkagent` binary itself on first use (sha256 checked), and makes no network calls of its own.
 
+## Demo
+
+24 seconds, one take, no audio: [watch the demo on X](https://x.com/MCPVOT/status/2119241113760649642).
+
+![zkagent-attest demo](docs/assets/demo-final.png)
+
+The take shows the whole workflow in order: the plugin's tools and hook, five recorded tool
+calls, `status`, `attest` returning `accept`, `verify` recomputing the session root, one
+action disclosed out of five, a single flipped hex character turning the verdict into
+`reject` with reason code `public_input_mismatch` and exit 1, and finally the Omarchy bar
+widget reading the verdict file that `zkagent verify --json` wrote.
+
 ## Try it in 60 seconds
 
 ```bash
-python3 scripts/install-zkagent.py                 # pinned v0.3.1+2026-11-05, sha256 verified
+python3 scripts/install-zkagent.py                 # pinned v0.4.0+2026-11-08, sha256 verified
 hermes plugins install MCPVOT/hermes-zkagent       # then: hermes plugins enable zkagent-attest
 # start a NEW Hermes session: the hook reloads now, the four tools load at session start
 #   zkagent_status {}                  -> which binary, how many actions are pending
