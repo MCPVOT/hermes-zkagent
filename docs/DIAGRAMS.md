@@ -91,3 +91,9 @@ flowchart LR
 1. this file, for the shape
 2. `docs/ARCHITECTURE.md`, for the decisions
 3. `CONSTITUTION.md`, for the rules that outrank convenience
+
+## Elsewhere
+
+`docs/FLOW.md` in [MCPVOT/zkagent](https://github.com/MCPVOT/zkagent/blob/master/docs/FLOW.md) draws
+the same system one level down: which artifact fields are public, which are private, the sixteen
+public inputs, and the one file in a run directory that must never ship with a receipt.
