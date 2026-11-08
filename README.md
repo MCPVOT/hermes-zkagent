@@ -21,6 +21,20 @@ action disclosed out of five, a single flipped hex character turning the verdict
 `reject` with reason code `public_input_mismatch` and exit 1, and finally the Omarchy bar
 widget reading the verdict file that `zkagent verify --json` wrote.
 
+## Check it without trusting it
+
+`examples/verify-it-yourself/` holds a real policy, receipt and proof, plus a tampered copy.
+One script downloads the pinned release, checks its sha256, and proves the first accepts while the
+second is rejected:
+
+```bash
+cd examples/verify-it-yourself && ./verify-it-yourself.sh
+```
+
+What that does and does not establish is written down in
+[docs/VERIFY-IT-YOURSELF.md](docs/VERIFY-IT-YOURSELF.md), including the part it cannot prove:
+the ledger is agent-authored, so a receipt is not a complete account of what an agent did.
+
 ## Try it in 60 seconds
 
 ```bash

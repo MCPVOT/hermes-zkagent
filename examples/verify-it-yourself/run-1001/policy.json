@@ -1,0 +1,16 @@
+{
+  "policy": {
+    "max_amount": 20,
+    "max_per_action": 3,
+    "expires_at": 1794106866,
+    "chain_id": 1,
+    "allowed_targets": [
+      1,
+      2,
+      3,
+      4
+    ]
+  },
+  "authority_pubkey": "c590e29140e1e463926b870325df7d0732ad0fdb1a02ee9f199a2b640630875e",
+  "signature": "8015ab2fdd1e7e0c89333b492f80fb5d07f742644d5e5ddf56cef7e1dbeaea14709d0af93842bf0d3a6f0ffd55740183d62c4e984563da1d18c588e96d7e8d01"
+}
