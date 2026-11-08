@@ -188,7 +188,14 @@ def main() -> int:
 
     print()
     print("\033[1;36m" + banner + "\033[0m", end="")
-    print("\033[1m           Totals are public. Actions are not. A tampered proof fails.\033[0m")
+    print("\033[1m           verifiable receipts for what an agent did\033[0m")
+    print()
+    print("\033[1m  accept    " + f"{attest['actions']} actions · total {attest['total']} · cap {attest['cap']}" + "\033[0m")
+    print("\033[1m  accept    verify · execution " + str(attest.get("execution_id", "-")) + "\033[0m")
+    print("\033[1m  reject    tamper · exit " + str(run.returncode) + " · public_input_mismatch\033[0m")
+    print("\033[1m  hidden    4 of 5 actions\033[0m")
+    print()
+    print("\033[1m  Totals are public. Actions are not. A tampered proof fails.\033[0m")
     print()
     print("[demo complete — press Enter to close]")
     try:
