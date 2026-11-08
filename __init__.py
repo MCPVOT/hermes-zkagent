@@ -440,13 +440,38 @@ def _write_ledger(rows: list[dict]) -> None:
     os.replace(tmp, path)
 
 
+_LEDGER_THREAD_LOCK = threading.Lock()
+
+
+@contextlib.contextmanager
+def _ledger_lock():
+    """Serialise appends against compaction, in this process and across processes.
+
+    `_compact` reads the log and then rewrites it. Without this, a row the hook appends
+    between that read and the `os.replace` is silently dropped: an action the agent really
+    recorded would belong to no receipt at all. The lock file is separate from
+    `pending.jsonl` because compaction replaces that file, and a lock held on a replaced
+    inode protects nothing.
+    """
+    with _LEDGER_THREAD_LOCK:
+        fd = os.open(_data_dir() / "ledger.lock", os.O_WRONLY | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            with contextlib.suppress(OSError):
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
+
 def _append_row(row: Mapping[str, Any]) -> None:
     """One append: no read, no rewrite. O_APPEND makes the row land atomically."""
-    fd = os.open(_pending_path(), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-    try:
-        os.write(fd, _row_line(row))
-    finally:
-        os.close(fd)
+    with _ledger_lock():
+        fd = os.open(_pending_path(), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        try:
+            os.write(fd, _row_line(row))
+        finally:
+            os.close(fd)
 
 
 def _start_session(state: dict) -> None:
@@ -467,9 +492,10 @@ def _start_session(state: dict) -> None:
 
 def _compact(consumed: int) -> list[dict]:
     """Drop the rows a receipt consumed; keep anything appended while it was being proven."""
-    remaining = _read_rows()[consumed:]
-    _write_ledger(remaining)
-    return remaining
+    with _ledger_lock():
+        remaining = _read_rows()[consumed:]
+        _write_ledger(remaining)
+        return remaining
 
 
 def _migrate_pending(state: dict) -> None:
@@ -1067,6 +1093,38 @@ def _tool_attest_unlocked(args: Mapping[str, Any] | None = None) -> str:
     except (ValueError, IndexError):
         verdict["raw"] = (out or err).strip()[:400]
 
+    # The verdict, not the exit code, decides what happens to the ledger (CONSTITUTION.md
+    # rule 1: an exit 0 beside a reject is still a reject). Consuming rows here would destroy
+    # the evidence for actions that were never proved, and indexing the run would poison
+    # session.json with a receipt that can never verify. On anything but an accept, leave the
+    # ledger exactly as it was so the caller can fix the cause and attest again.
+    accepted = code == 0 and verdict.get("verdict") == "accept"
+    if not accepted:
+        refusal: dict[str, Any] = {
+            "ok": False,
+            "verdict": verdict.get("verdict"),
+            "reason": verdict.get("reason"),
+            "reason_code": verdict.get("reason_code"),
+            "exit": code,
+            "execution_id": run_id,
+            "actions": count,
+            "total": total,
+            "cap": max_amount,
+            "pending_after": len(pending),
+            "error": (
+                "the attestation was not accepted, so nothing was consumed: the recorded actions "
+                "are still pending and no run was indexed. Fix the cause and attest again."
+            ),
+            "receipt": str(receipt_path),
+            "proof": str(proof_path),
+            "policy": str(policy_path),
+        }
+        if verdict.get("raw"):
+            refusal["detail"] = verdict["raw"]
+        if install:
+            refusal["install"] = install
+        return _json(refusal)
+
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     run = {
         "run_id": run_id,
@@ -1106,7 +1164,7 @@ def _tool_attest_unlocked(args: Mapping[str, Any] | None = None) -> str:
         session_error = str(exc)
 
     payload: dict[str, Any] = {
-        "ok": code == 0,
+        "ok": accepted,
         "verdict": verdict.get("verdict"),
         "reason": verdict.get("reason"),
         "execution_id": run_id,
@@ -1211,7 +1269,9 @@ def _verify_one(binary: str, runs: Sequence[Mapping[str, Any]], report: Mapping[
     run_dir = Path(str(run["dir"]))
     verdict = _verify_receipt(binary, run_dir, params.get("now"))
     payload = {**payload, **verdict, "execution_id": run_id}
-    if verdict.get("verdict") != "accept":
+    # `ok` is exit 0 AND an accept verdict; the string alone would let a failed subprocess
+    # that printed an accept-shaped body record an acceptance in seen.json.
+    if not verdict.get("ok"):
         return _json(payload)
 
     # A receipt that accepts alone but disagrees with the index is not part of the attested

@@ -14,9 +14,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      # No zkagent binary and no hermes CLI on the runner, so check.py skips the smoke
-      # run and the hermes gates and still enforces the four that protect the tree:
-      # secrets, bundled binaries, manifest/code agreement, docs.
+      # The smoke run and the guard tests execute here, not just the tree-hygiene gates.
+      # The binary comes from the repo's own checksum-pinned installer, and --binary is
+      # passed explicitly because ~/.local/bin is not on the runner's PATH.
       # No untrusted event input is interpolated into any run step.
+      - name: install the pinned zkagent binary
+        run: python3 scripts/install-zkagent.py
       - name: repository gates
-        run: python3 scripts/check.py --no-binary
+        run: python3 scripts/check.py --binary "$HOME/.local/bin/zkagent"

@@ -36,26 +36,35 @@ BINARY_MAGIC = (b"\x7fELF", b"MZ", b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf", b"\
 
 class Result:
     def __init__(self) -> None:
-        self.rows: list[tuple[str, bool, str]] = []
+        self.rows: list[tuple[str, str, str]] = []
 
     def add(self, name: str, ok: bool, detail: str = "") -> None:
-        self.rows.append((name, ok, detail))
+        self.rows.append((name, "PASS" if ok else "FAIL", detail))
+
+    def skip(self, name: str, detail: str = "") -> None:
+        # A gate that never ran is not a gate that passed. Reporting it as PASS was how CI
+        # stayed green with no zkagent binary and no Hermes CLI on the runner.
+        self.rows.append((name, "SKIP", detail))
 
     def report(self) -> int:
         width = max(len(n) for n, _, _ in self.rows) + 2
-        failed = 0
-        for name, ok, detail in self.rows:
-            mark = "PASS" if ok else "FAIL"
-            if not ok:
+        failed = skipped = 0
+        for name, mark, detail in self.rows:
+            if mark == "FAIL":
                 failed += 1
+            elif mark == "SKIP":
+                skipped += 1
             print(f"{mark:5} {name:<{width}} {detail}")
         print()
-        print("OK" if failed == 0 else f"{failed} gate(s) failed")
+        summary = "OK" if failed == 0 else f"{failed} gate(s) failed"
+        if skipped:
+            summary += f" | {skipped} gate(s) SKIPPED, not passed"
+        print(summary)
         return 0 if failed == 0 else 1
 
 
-def run(cmd: list[str], timeout: int = 300) -> tuple[int, str]:
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+def run(cmd: list[str], timeout: int = 300, env: dict | None = None) -> tuple[int, str]:
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False, env=env)
     return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
 
 
@@ -120,17 +129,27 @@ def check_manifest_matches_code(result: Result) -> None:
 
 def check_smoke(result: Result, binary: str | None) -> None:
     if not binary:
-        result.add("smoke test", True, "skipped (no zkagent binary; pass --binary PATH)")
+        result.skip("smoke test", "no zkagent binary; pass --binary PATH")
         return
-    code, out = run([sys.executable, str(ROOT / "tests" / "smoke.py")], timeout=300)
+    # Honour --binary PATH: smoke.py resolves ZKAGENT_BIN itself, so the flag has to reach
+    # its environment rather than only acting as a presence check here.
+    env = {**os.environ, "ZKAGENT_BIN": binary}
+    code, out = run([sys.executable, str(ROOT / "tests" / "smoke.py")], timeout=300, env=env)
     tail = [line for line in out.strip().splitlines() if line][-1] if out.strip() else ""
     result.add("smoke test", code == 0 and "OK" in out, tail[:90])
 
 
+def check_guard_tests(result: Result) -> None:
+    """Failure-path guards. No binary needed, so this gate can never be skipped."""
+    code, out = run([sys.executable, str(ROOT / "tests" / "test_guards.py")], timeout=300)
+    tail = [line for line in out.strip().splitlines() if line][-1] if out.strip() else ""
+    result.add("guard tests", code == 0 and "OK" in out, tail[:90])
+
+
 def check_hermes_gates(result: Result) -> None:
     if not shutil.which("hermes"):
-        result.add("hermes validate", True, "skipped (no hermes CLI)")
-        result.add("hermes doctor", True, "skipped")
+        result.skip("hermes validate", "no hermes CLI on this machine")
+        result.skip("hermes doctor", "no hermes CLI on this machine")
         return
     code, out = run(["hermes", "plugins", "validate", str(ROOT), "--install-deps"], timeout=600)
     result.add("hermes validate", code == 0 and "Validation passed" in out, "catalog checks")
@@ -157,6 +176,7 @@ def main() -> int:
     check_no_binaries(result)
     check_manifest_matches_code(result)
     check_docs(result)
+    check_guard_tests(result)
     check_smoke(result, None if args.no_binary else args.binary)
     check_hermes_gates(result)
     return result.report()

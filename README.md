@@ -38,7 +38,7 @@ python3 tests/smoke.py
 | verify | ~11 ms, stateless |
 | proof artifact | 128 B compressed, 2.3 KB as the CLI's JSON with its public inputs |
 | receipt | 199 B: totals, action count, time, chain, execution id, trace root |
-| tests | 153 across the CLI repo, including the negative controls (over-cap, expired, tampered, wrong key) |
+| tests | 156 across the CLI repo, including the negative controls (over-cap, expired, tampered, wrong key), plus 10 failure-path guard tests in `tests/test_guards.py` here |
 
 **Read next:** [Constitution](CONSTITUTION.md) (the eight non-negotiables) ·
 [Architecture](docs/ARCHITECTURE.md) (data flow, files, failure modes) ·

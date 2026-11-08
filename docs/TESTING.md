@@ -1,7 +1,7 @@
 # Testing
 
-Three gates. Each answers a different question, and passing one is not evidence about the
-others.
+Three gates plus a fourth for the failure paths. Each answers a different question, and
+passing one is not evidence about the others.
 
 ## 1. Does it load?
 
@@ -58,7 +58,26 @@ test needs no network. It proves the plumbing — import by path, `--dir`, re-re
 not the download; the sha256 check lives in `scripts/install-zkagent.py` and is unchanged by
 the plugin.
 
-## 3. Does it work where a user will run it?
+## 3. Does it refuse?
+
+```bash
+python3 tests/test_guards.py
+```
+
+Ten tests, no binary and no Hermes needed: the subprocess runner is stubbed so each test
+chooses exactly which step fails, then asserts the consequence rather than the verdict text.
+A rejected attestation must leave the ledger pending and unindexed, an exit 0 beside a
+`reject` must not read as success, unparseable verifier output must not read as an accept, a
+failed verifier that prints an accept body must not be recorded in `seen.json`, a row the hook
+appends during compaction must survive, an over-cap request must keep the ledger, disclosure
+indices outside the receipt must be refused, and the session Merkle root is checked against an
+independent implementation written in the test.
+
+These exist because `tests/smoke.py` stayed green with the guards deleted. Every one of them
+fails against the pre-fix module, which is the only reason to trust them. `scripts/check.py`
+runs this gate unconditionally, and CI runs both suites.
+
+## 4. Does it work where a user will run it?
 
 ```bash
 hermes plugins install MCPVOT/hermes-zkagent --ref <40-hex sha> --no-enable
