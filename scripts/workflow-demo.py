@@ -10,6 +10,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -62,7 +63,7 @@ def small_art(phrase: str) -> list[str]:
 def heading(width: int) -> int:
     print("\033[1;36m" + BANNER + "\033[0m", end="")
     print("           verifiable receipts for what an agent did")
-    print("           zkagent-attest 0.5.1 · zkagent 0.4.0 · format 3")
+    print(f"           zkagent-attest {plugin_version()} · zkagent 0.4.0 · format 3")
     print()
     print("\033[36m" + "\n".join("  " + row.rstrip() for row in small_art("VERIFIABLE RECEIPTS")) + "\033[0m")
     print()
@@ -87,6 +88,15 @@ def field(key: str, value) -> None:
     print(f"  {key:<18} {text}")
     time.sleep(0.35)
 
+
+
+def plugin_version() -> str:
+    """Read the version instead of hardcoding it: a demo that lies about the build is worse than no demo."""
+    try:
+        found = re.search(r"^version:\s*(\S+)", (ROOT / "plugin.yaml").read_text(encoding="utf-8"), re.M)
+        return found.group(1).strip('"\'') if found else "unknown"
+    except OSError:
+        return "unknown"
 
 def main() -> int:
     delay = float(os.environ.get("CLI_DELAY", "0"))
@@ -118,7 +128,7 @@ def main() -> int:
         print(f"\033[{top};{height}r\033[{top};1H", end="", flush=True)
 
     step("0", "installed in Hermes")
-    field("plugin", "zkagent-attest 0.5.1")
+    field("plugin", f"zkagent-attest {plugin_version()}")
     field("tools", ", ".join(sorted(tools)))
     field("hook", ", ".join(hooks) or "-")
     time.sleep(0.6)

@@ -10,6 +10,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -89,6 +90,15 @@ def dump(payload: dict, keys: tuple[str, ...]) -> None:
             print(f"  {key:<18} {value}")
     time.sleep(PAUSE)
 
+
+
+def plugin_version() -> str:
+    """Read the version instead of hardcoding it: a demo that lies about the build is worse than no demo."""
+    try:
+        found = re.search(r"^version:\s*(\S+)", (ROOT / "plugin.yaml").read_text(encoding="utf-8"), re.M)
+        return found.group(1).strip('"\'') if found else "unknown"
+    except OSError:
+        return "unknown"
 
 def main() -> int:
     binary = os.environ.get("ZKAGENT_BIN", "/home/tango/.local/bin/zkagent")
