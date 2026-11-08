@@ -173,7 +173,8 @@ def main() -> int:
     time.sleep(PAUSE)
 
     beat("reveal exactly one action")
-    show(json.loads(tools["zkagent_disclose"]({"index": 2})), ("index", "digest", "verified"))
+    revealed = json.loads(tools["zkagent_disclose"]({"index": 2}))
+    show(revealed, ("index", "recorded_tool", "digest"))
     print("    the other four actions were not revealed")
     time.sleep(PAUSE)
 
