@@ -74,6 +74,8 @@ session.
   accept, a one-byte tamper rejected with `public_input_mismatch`, replay
   refused, session aggregate verified.
 - Upstream library: `MCPVOT/zkagent`, MIT, 156 tests passing on master.
+- Desktop integration: `MCPVOT/omarchy-zkagent`, the Omarchy bar widget, installable with
+  `omarchy plugin add https://github.com/MCPVOT/omarchy-zkagent.git --enable`.
 
 ## Disclosures and accepted risks
 
