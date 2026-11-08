@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.8
+
+### Added
+
+- `docs/assets/card.png`, a 2:1 marketplace card (1200x600), and screenshots declared in the catalog
+  entry so the plugin page shows the demo instead of an empty gallery.
+- `docs_url` and `platforms` in the catalog entry: both optional, both worth stating.
+
 ## 0.5.7
 
 ### Added
