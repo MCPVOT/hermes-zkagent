@@ -140,6 +140,14 @@ def check_smoke(result: Result, binary: str | None) -> None:
 
 
 
+
+def check_artifact_shapes(result: Result) -> None:
+    """docs/ARTIFACTS.md must match what a live run actually writes."""
+    code, out = run([sys.executable, str(ROOT / "scripts" / "check_artifacts.py"), "--binary", BINARY_ARG]
+                    if False else [sys.executable, str(ROOT / "scripts" / "check_artifacts.py")], timeout=300)
+    tail = out.strip().splitlines()[-1] if out.strip() else ""
+    result.add("artifact shapes", code == 0 and "OK" in out, tail[:90])
+
 def check_version(result: Result) -> None:
     """The plugin version, the README badge and the changelog must agree.
 
@@ -199,6 +207,7 @@ def main() -> int:
     check_no_binaries(result)
     check_manifest_matches_code(result)
     check_docs(result)
+    check_artifact_shapes(result)
     check_version(result)
     check_guard_tests(result)
     check_smoke(result, None if args.no_binary else args.binary)

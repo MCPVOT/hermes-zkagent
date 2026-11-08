@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.7
+
+### Added
+
+- `docs/ARTIFACTS.md`: every on-disk file the plugin writes, with its keys, and the note that
+  `actions.json` is the witness and must never ship beside a receipt.
+- `scripts/check_artifacts.py`: runs one attestation and one verification in a throwaway home, then
+  compares the real keys with the documented ones. Wired into the gates, so a field added in code and
+  not in the doc fails the build.
+
 ## 0.5.6
 
 ### Changed
