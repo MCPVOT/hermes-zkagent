@@ -5,7 +5,7 @@
 **Your agent's transcript is a claim. This plugin turns it into a receipt a third party can check.**
 
 [![gates](https://github.com/MCPVOT/hermes-zkagent/actions/workflows/check.yml/badge.svg)](https://github.com/MCPVOT/hermes-zkagent/actions/workflows/check.yml)
-![plugin](https://img.shields.io/badge/plugin-0.5.5-blue)
+![plugin](https://img.shields.io/badge/plugin-0.5.6-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![zkagent](https://img.shields.io/badge/zkagent-0.4.0%2B2026--11--08-blueviolet)
 

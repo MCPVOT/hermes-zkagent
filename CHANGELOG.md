@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.6
+
+### Changed
+
+- the installer pins `zkagent v0.4.1+2026-11-08`. No functional change in the binary: 0.4.1 exists
+  because the 0.4.0 tag pointed at a commit that master never contained after a squash merge, so
+  `git describe` lied about which version the tree was. Moving the pin keeps one version across the
+  ecosystem instead of two that differ only by a tag.
+
+### Added
+
+- `CHANGELOG.md` covering 0.5.0 through 0.5.6, and a gate that fails when `plugin.yaml`, the README
+  badge and this file disagree.
+
 Format: `semver`, newest first. The plugin version is a plugin concern; the `zkagent` binary it
 drives is versioned separately with `semver + date` in
 [MCPVOT/zkagent](https://github.com/MCPVOT/zkagent/blob/master/VERSIONING.md).
