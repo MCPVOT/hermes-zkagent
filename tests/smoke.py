@@ -207,7 +207,12 @@ def main() -> int:
     print("session  : aggregate refused after a receipt was accepted |", blocked["reason"])
 
     # --- the aggregate on its own: every receipt accepts, roots match, total adds up --------
+    # A deliberate new guard: the ledger *and* the header that binds it, which is what
+    # "start over" means now that a bare delete is detectable as damage.
     module._seen_path().unlink(missing_ok=True)
+    state = module._load_state()
+    state.pop("guard", None)
+    module._save_state(state)
     aggregate = json.loads(ctx.tools["zkagent_verify"]({"session": True}))
     assert aggregate.get("verdict") == "accept", aggregate
     assert aggregate["root"] == index["root"], aggregate

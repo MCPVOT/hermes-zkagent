@@ -184,11 +184,36 @@ def _signature(path: Path) -> tuple[int, int, int] | None:
     return (stat.st_mtime_ns, stat.st_size, stat.st_ino)
 
 
+# Set when state.json exists but cannot be understood. An absent file is a fresh profile; an
+# unreadable one is damage, and treating it as empty would silently start a new id range and drop
+# the replay guard header, which is exactly the state an attacker would want.
+_STATE_ERROR: str | None = None
+
+
 def _load_state() -> dict:
+    global _STATE_ERROR
     path = _state_path()
     try:
-        state = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        _STATE_ERROR = None
+        raw = "{}"
+    except OSError as exc:
+        _STATE_ERROR = f"{path.name} could not be read ({exc}); refusing to treat it as an empty session."
+        raw = "{}"
+
+    try:
+        state = json.loads(raw)
+        if not isinstance(state, dict):
+            raise ValueError("not a JSON object")
+        _STATE_ERROR = None
+    except ValueError:
+        if _STATE_ERROR is None:
+            _STATE_ERROR = (
+                f"{path.name} is not valid JSON; refusing to treat it as an empty session, because that "
+                "would start a new execution-id range and drop the replay guard header. Repair the file, "
+                "or move it aside deliberately to begin a new session."
+            )
         state = {}
     state.setdefault("runs", [])
     state.setdefault("next_run", 1)
@@ -832,6 +857,51 @@ def _claimed_execution_ids() -> dict[str, str]:
     return claimed
 
 
+def _guard_digest(ids: Sequence[int]) -> str:
+    """Digest of the accepted execution ids, sorted. Binds the ledger to state.json."""
+    return hashlib.sha256(",".join(str(i) for i in sorted(ids)).encode()).hexdigest()
+
+
+def _guard_intact(state: Mapping[str, Any]) -> tuple[bool, str | None]:
+    """Compare the guard header with the ledger on disk.
+
+    seen.json is a small file in a user-writable directory: deleting or trimming it used to be an
+    invisible way to present the same receipt again. state.json remembers how many executions
+    were accepted and a digest of their ids, so a ledger that shrank is detectable instead of
+    silently permissive. No header (or no state.json yet) means nothing to compare: that is a
+    fresh profile, not a failure.
+    """
+    guard = state.get("guard") if isinstance(state, Mapping) else None
+    if not isinstance(guard, Mapping):
+        return True, None
+    ids = sorted(int(k) for k in _seen_records("executions") if str(k).isdigit())
+    accepted = int(guard.get("accepted") or 0)
+    if len(ids) < accepted:
+        return False, (
+            f"the guard header records {accepted} accepted execution(s) (highest {guard.get('high_water')}) "
+            f"but {SEEN_FILE} holds {len(ids)}: the ledger was deleted or trimmed, so replay "
+            "protection cannot be trusted. Restore the ledger or start a new session deliberately."
+        )
+    if _guard_digest(ids) != guard.get("digest"):
+        return False, (
+            f"{SEEN_FILE} does not match the guard header digest, so the accepted-execution set was "
+            "edited outside the plugin. Refusing until the ledger is restored or the header is cleared."
+        )
+    return True, None
+
+
+def _bind_guard() -> None:
+    """Write the guard header after an acceptance. Best effort: never fail an acceptance for it."""
+    try:
+        state = _load_state()
+        ids = sorted(int(k) for k in _seen_records("executions") if str(k).isdigit())
+        state["guard"] = {"accepted": len(ids), "high_water": ids[-1] if ids else None,
+                          "digest": _guard_digest(ids), "bound_at": int(time.time())}
+        _save_state(state)
+    except (OSError, ValueError):
+        pass
+
+
 def _record_acceptance(kind: str, key: str, record: Mapping[str, Any]) -> tuple[bool, str | None]:
     """Add one acceptance to seen.json, atomically. Returns (recorded, error)."""
     seen = _load_seen()
@@ -841,6 +911,8 @@ def _record_acceptance(kind: str, key: str, record: Mapping[str, Any]) -> tuple[
     try:
         tmp.write_text(json.dumps(seen, indent=2, sort_keys=True), encoding="utf-8")
         os.replace(tmp, path)
+        if kind == "executions":
+            _bind_guard()
     except OSError as exc:
         return False, f"could not write {SEEN_FILE}: {exc}"
     return True, None
@@ -920,6 +992,8 @@ def _need_binary() -> tuple[str | None, str | None, dict | None]:
 def tool_status(args: Mapping[str, Any] | None = None) -> str:
     binary, error, install = _need_binary()
     state = _load_state()
+    if _STATE_ERROR:
+        return _json({"ok": False, "verdict": "reject", "reason": "state_unreadable", "error": _STATE_ERROR})
     pending = _pending(state)
     runs = state.get("runs") or []
     seen = _load_seen()
@@ -1014,6 +1088,8 @@ def _tool_attest_unlocked(args: Mapping[str, Any] | None = None) -> str:
         return _json({"ok": False, "error": error, "install": install} if install else {"ok": False, "error": error})
 
     state = _load_state()
+    if _STATE_ERROR:
+        return _json({"ok": False, "verdict": "reject", "reason": "state_unreadable", "error": _STATE_ERROR})
     pending = _pending(state)
     if not pending:
         return _json({"ok": False, "error": "nothing to attest yet: no tool calls recorded, and the session is empty."})
@@ -1296,9 +1372,23 @@ def tool_verify(args: Mapping[str, Any] | None = None) -> str:
     if error:
         return _json({"ok": False, "error": error, **base})
     state = _load_state()
+    if _STATE_ERROR:
+        return _json({**base, "ok": False, "verdict": "reject", "reason": "state_unreadable", "error": _STATE_ERROR})
     runs = state.get("runs") or []
     if not runs:
         return _json({"ok": False, "error": "no attestation yet: call zkagent_attest first.", **base})
+
+    intact, guard_error = _guard_intact(state)
+    if not intact:
+        return _json(
+            {
+                **base,
+                "ok": False,
+                "verdict": "reject",
+                "reason": "replay_guard_lost",
+                "error": guard_error,
+            }
+        )
 
     report = _session_report()
     payload: dict[str, Any] = dict(base)
