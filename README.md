@@ -1,13 +1,34 @@
 # zkagent-attest
 
-Verifiable receipts for what a Hermes agent actually did.
+**Your agent's transcript is a claim. This plugin turns it into a receipt a third party can check.**
 
-Your agent's transcript is a claim by the agent. This plugin makes it a **proof**: every
-tool call is recorded, the session is proved to have stayed inside a policy cap you signed,
-and the receipt publishes totals only. The actions stay private. When you need to show one
-of them, you reveal exactly one, with the Merkle path that places it in the attested set.
+[![gates](https://github.com/MCPVOT/hermes-zkagent/actions/workflows/check.yml/badge.svg)](https://github.com/MCPVOT/hermes-zkagent/actions/workflows/check.yml)
+![plugin](https://img.shields.io/badge/plugin-0.5.5-blue)
+![license](https://img.shields.io/badge/license-MIT-green)
+![zkagent](https://img.shields.io/badge/zkagent-0.4.0%2B2026--11--08-blueviolet)
 
-Installs in one command, fetches its pinned `zkagent` binary itself on first use (sha256 checked), and makes no network calls of its own.
+Every tool call is recorded with its cost and a digest of its arguments. The session is proved to
+have stayed inside a policy cap you signed, and the receipt publishes **totals only**: the action
+count, the spend, the policy that bound them. The actions stay private. When you need to show one,
+you reveal exactly one, with the Merkle path that places it in the attested set.
+
+- **checkable, not asserted.** A Groth16 proof, 7,442 constraints, format 3, verified by a binary
+  whose release is pinned and sha256-checked by the installer.
+- **private by construction.** No prompt, no argument and no tool output ever reaches a receipt;
+  arguments are hashed on the way in.
+- **honest about its limits.** The ledger is written by the agent about itself, so a receipt proves
+  what it lists, not that it lists everything. Said in one line, here and in `docs/`.
+- **no bundled binary.** The plugin is Python source; the prover arrives from a checksum-pinned
+  release, so what you install is the artifact that was tested.
+
+## Where to look first
+
+| if you have | read |
+| --- | --- |
+| 30 seconds | the demo below, or [the post on X](https://x.com/MCPVOT/status/2119241113760649642) |
+| 3 minutes | run `examples/verify-it-yourself/verify-it-yourself.sh` and check a receipt yourself |
+| 10 minutes | `docs/SECURITY-AUDIT.md` for the findings, `docs/DEMO.md` for the run sheet |
+| longer | `docs/ARCHITECTURE.md`, then the library at [MCPVOT/zkagent](https://github.com/MCPVOT/zkagent) |
 
 ## Demo
 
