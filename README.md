@@ -62,7 +62,7 @@ python3 tests/smoke.py
 ## Install
 
 ```bash
-python3 scripts/install-zkagent.py               # pinned v0.3.1+2026-11-05, sha256 verified
+python3 scripts/install-zkagent.py               # pinned v0.4.0+2026-11-08, sha256 verified
 hermes plugins install MCPVOT/hermes-zkagent     # then: hermes plugins enable zkagent-attest
 python3 scripts/check.py                         # secrets, binaries, manifest, smoke, hermes gates
 ```
