@@ -87,28 +87,47 @@ def main() -> int:
     beat("one byte changed in the proof")
     run_dir = pathlib.Path(attest["proof"]).parent
     tampered = json.loads((run_dir / "proof.json").read_text())
-    flipped = False
-    for key, value in tampered.items():
-        if isinstance(value, str) and len(value) >= 16:
-            tampered[key] = ("0" if value[0] != "0" else "1") + value[1:]
-            flipped = True
-            break
-    print(f"    flipped one hex character: {flipped}")
+
+    def flip(node) -> bool:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if isinstance(value, str) and len(value) >= 16 and all(c in "0123456789abcdef" for c in value.lower()):
+                    node[key] = ("0" if value[0] != "0" else "1") + value[1:]
+                    return True
+                if flip(value):
+                    return True
+        elif isinstance(node, list):
+            for index, value in enumerate(node):
+                if isinstance(value, str) and len(value) >= 16 and all(c in "0123456789abcdef" for c in value.lower()):
+                    node[index] = ("0" if value[0] != "0" else "1") + value[1:]
+                    return True
+                if flip(value):
+                    return True
+        return False
+
+    changed = flip(tampered)
+    print(f"    tampered           {changed}")
     (run_dir / "proof-tampered.json").write_text(json.dumps(tampered))
     import subprocess
 
-    code = subprocess.run(
+    run = subprocess.run(
         [os.environ["ZKAGENT_BIN"], "--json", "verify", "--keys", str(module._keys_dir()),
          "--policy", str(run_dir / "policy.json"), "--receipt", str(run_dir / "receipt.json"),
          "--proof", str(run_dir / "proof-tampered.json")],
         capture_output=True, text=True, check=False,
     )
-    print(f"    verdict            REJECT  (exit {code.returncode})")
-    print(f"    reason             public_input_mismatch")
+    verdict: dict = {}
+    for line in run.stdout.strip().splitlines():
+        try:
+            verdict = json.loads(line)
+        except ValueError:
+            continue
+    print(f"    verdict            {str(verdict.get('verdict', 'unknown')).upper()}  (exit {run.returncode})")
+    print(f"    reason             {verdict.get('reason_code') or verdict.get('reason') or '-'}")
     time.sleep(PAUSE)
 
     beat("reveal exactly one action")
-    show(json.loads(tools["zkagent_disclose"]({"index": 2})), ("index", "out", "recorded_tool"))
+    show(json.loads(tools["zkagent_disclose"]({"index": 2})), ("index", "recorded_tool"))
 
     print()
     print("\033[1mTotals are public. Actions are not. A tampered proof fails.\033[0m")
