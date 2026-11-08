@@ -207,5 +207,29 @@ class TestMerkleKnownAnswer(GuardCase):
         self.assertNotEqual(self.m._merkle_root(roots[:2]), self.m._merkle_root(roots[:2][::-1]))
 
 
+class TestCrossModeReplay(GuardCase):
+    """The seen ledger has two sections, and the same evidence must not use both roads."""
+
+    def test_a_session_refuses_an_execution_already_accepted_alone(self):
+        self.attest_accept()
+        stub_run(self.m, verify_exit=0, verify_body={"verdict": "accept", "reason": None})
+        first = json.loads(self.m.tool_verify({}))
+        self.assertEqual(first["verdict"], "accept", first)
+        again = json.loads(self.m.tool_verify({"session": True}))
+        self.assertFalse(again["ok"], again)
+        self.assertEqual(again["verdict"], "replay", again)
+        self.assertEqual(again["reason"], "execution_already_accepted", again)
+
+    def test_a_receipt_refuses_an_execution_covered_by_an_accepted_session(self):
+        self.attest_accept()
+        stub_run(self.m, verify_exit=0, verify_body={"verdict": "accept", "reason": None})
+        session = json.loads(self.m.tool_verify({"session": True}))
+        self.assertEqual(session["verdict"], "accept", session)
+        alone = json.loads(self.m.tool_verify({}))
+        self.assertFalse(alone["ok"], alone)
+        self.assertEqual(alone["verdict"], "replay", alone)
+        self.assertEqual(alone["reason"], "already_accepted_in_session", alone)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
