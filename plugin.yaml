@@ -1,5 +1,5 @@
 name: zkagent-attest
-version: 0.5.4
+version: 0.5.5
 description: "Prove what your agent did without revealing what it did: every tool call is recorded, the session is proved inside a signed cap, and one action can be disclosed on request."
 author: MCPVOT
 license: MIT
