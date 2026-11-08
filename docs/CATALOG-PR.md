@@ -65,6 +65,27 @@ later single verify, with `reason_code` `execution_already_accepted` and
 first version of this plugin accepted the same work once as a receipt and again inside its
 session.
 
+## A judge can check a receipt without trusting us
+
+`examples/verify-it-yourself/` contains a real policy, receipt, proof, the public `keys/vk.bin`, and
+a copy of the proof with one hex character changed. One script downloads the pinned release, checks
+it against `SHA256SUMS`, and shows all three outcomes:
+
+```bash
+cd examples/verify-it-yourself && ./verify-it-yourself.sh
+```
+
+```
+== checksum ok: c678fa1a…da4e81
+== 1. the real proof        {"verdict":"accept"}                                   exit 0
+== 2. tampered proof        {"reason_code":"public_input_mismatch","verdict":"reject"}  exit 1
+PASS: the receipt verifies, and the tampered copy does not.
+```
+
+`docs/VERIFY-IT-YOURSELF.md` states what that establishes and what it cannot: the ledger is
+agent-authored, so a receipt is not a complete account of what an agent did, and the trusted setup
+is single-party.
+
 ## Evidence
 
 - Security audit with 15 findings and their evidence:
