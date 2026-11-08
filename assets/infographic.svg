@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#94A3B8"/>
+    </marker>
+    <marker id="bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#EF4444"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="630" fill="#0B0F14"/>
+  <text x="60" y="86" fill="#E2E8F0" font-family="monospace" font-size="42" font-weight="bold">zkagent-attest</text>
+  <text x="60" y="124" fill="#94A3B8" font-family="sans-serif" font-size="20">verifiable receipts for what an agent did</text>
+  <text x="60" y="160" fill="#22D3EE" font-family="monospace" font-size="16">zkagent 0.4.1+2026-11-08 · format 3 · 7,442 constraints</text>
+  <g>
+    <rect x="60" y="210" width="220" height="92" rx="16" fill="#111827" stroke="#22D3EE" stroke-width="3"/>
+    <text x="170.0" y="244" fill="#22D3EE" font-family="monospace" font-size="20" font-weight="bold" text-anchor="middle">1 · RECORD</text>
+    <text x="170.0" y="272" fill="#94A3B8" font-family="sans-serif" font-size="15" text-anchor="middle">every tool call, args hashed</text>
+  </g>
+  <line x1="286" y1="256.0" x2="334" y2="256.0" stroke="#94A3B8" stroke-width="2" marker-end="url(#a)"/>
+  <g>
+    <rect x="340" y="210" width="220" height="92" rx="16" fill="#111827" stroke="#22D3EE" stroke-width="3"/>
+    <text x="450.0" y="244" fill="#22D3EE" font-family="monospace" font-size="20" font-weight="bold" text-anchor="middle">2 · ATTEST</text>
+    <text x="450.0" y="272" fill="#94A3B8" font-family="sans-serif" font-size="15" text-anchor="middle">signed cap + proof</text>
+  </g>
+  <line x1="566" y1="256.0" x2="614" y2="256.0" stroke="#94A3B8" stroke-width="2" marker-end="url(#a)"/>
+  <g>
+    <rect x="620" y="210" width="220" height="92" rx="16" fill="#111827" stroke="#22D3EE" stroke-width="3"/>
+    <text x="730.0" y="244" fill="#22D3EE" font-family="monospace" font-size="20" font-weight="bold" text-anchor="middle">3 · VERIFY</text>
+    <text x="730.0" y="272" fill="#94A3B8" font-family="sans-serif" font-size="15" text-anchor="middle">totals, never actions</text>
+  </g>
+  <line x1="846" y1="256.0" x2="894" y2="256.0" stroke="#94A3B8" stroke-width="2" marker-end="url(#a)"/>
+  <g>
+    <rect x="900" y="210" width="220" height="92" rx="16" fill="#111827" stroke="#22D3EE" stroke-width="3"/>
+    <text x="1010.0" y="244" fill="#22D3EE" font-family="monospace" font-size="20" font-weight="bold" text-anchor="middle">4 · DISCLOSE</text>
+    <text x="1010.0" y="272" fill="#94A3B8" font-family="sans-serif" font-size="15" text-anchor="middle">exactly one slot</text>
+  </g>
+  <line x1="730" y1="302" x2="730" y2="380" stroke="#EF4444" stroke-width="2" marker-end="url(#bad)"/>
+  <g>
+    <rect x="530" y="392" width="400" height="86" rx="14" fill="#1F1214" stroke="#EF4444" stroke-width="3"/>
+    <text x="730" y="424" fill="#EF4444" font-family="monospace" font-size="18" font-weight="bold" text-anchor="middle">one byte changed</text>
+    <text x="730" y="452" fill="#94A3B8" font-family="monospace" font-size="14" text-anchor="middle">reject · public_input_mismatch · exit 1</text>
+  </g>
+  <text x="60" y="546" fill="#F59E0B" font-family="monospace" font-size="16">cap 20 · total 9 · 5 actions</text>
+  <text x="60" y="576" fill="#E2E8F0" font-family="monospace" font-size="16">Totals are public. Actions are not.</text>
+  <text x="60" y="602" fill="#94A3B8" font-family="sans-serif" font-size="14">Hermes plugin · MCPVOT/hermes-zkagent · the Omarchy bar shows the last verdict as the ZK mark</text>
+</svg>

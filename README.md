@@ -23,6 +23,17 @@ you reveal exactly one, with the Merkle path that places it in the attested set.
 - **no bundled binary.** The plugin is Python source; the prover arrives from a checksum-pinned
   release, so what you install is the artifact that was tested.
 
+## One picture
+
+<img src="assets/infographic.png" alt="record → attest → verify → disclose, with a tampered proof rejected" width="100%">
+
+Four steps, and the branch that matters: a single changed byte turns `accept` into `reject` with
+`public_input_mismatch` and exit 1.
+
+Mermaid diagrams for the sequence, the verdict states and the file ownership live in
+[docs/DIAGRAMS.md](docs/DIAGRAMS.md) — they render on GitHub and in any markdown viewer that
+supports mermaid.
+
 ## Where to look first
 
 | if you have | read |
