@@ -16,7 +16,60 @@ import tempfile
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-PAUSE = 2.0
+PAUSE = 2.4
+FONT = {
+    "V": ("█ █", "█ █", " ▀ "), "E": ("█▀▀", "█▀ ", "▀▀▀"), "R": ("█▀▄", "█▀▄", "▀ ▀"),
+    "I": ("▀█▀", " █ ", "▀▀▀"), "F": ("█▀▀", "█▀ ", "▀  "), "A": ("▄▀▄", "█▀█", "▀ ▀"),
+    "B": ("█▀▄", "█▀▄", "▀▀ "), "L": ("█  ", "█  ", "▀▀▀"), "C": ("█▀▀", "█  ", "▀▀▀"),
+    "P": ("█▀▄", "█▀ ", "▀  "), "T": ("▀█▀", " █ ", " ▀ "), "S": ("█▀▀", "▀▀█", "▀▀▀"),
+    " ": ("   ", "   ", "   "),
+}
+
+BANNER = r"""
+   ███████╗██╗  ██╗ █████╗  ██████╗ ███████╗███╗   ██╗████████╗
+   ╚══███╔╝██║ ██╔╝██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝
+     ███╔╝ █████╔╝ ███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║
+    ███╔╝  ██╔═██╗ ██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║
+   ███████╗██║  ██╗██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║
+   ╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝
+"""
+
+BLURB = (
+    "An agent acts on your behalf: it calls tools, spends budget, touches your data. Today "
+    "the only account of that is the agent's own transcript. zkagent turns the session into "
+    "a receipt you can check: the totals, the action count and a policy cap you signed, "
+    "proved in zero knowledge, so a verifier learns the session stayed inside the limits "
+    "without seeing a single action. In Hermes that gives every plugin, MCP server and client "
+    "a shared answer to \"did this agent do what it was allowed to do\" without publishing "
+    "prompts, arguments or customer data."
+)
+
+
+def small_art(phrase: str) -> list[str]:
+    rows = ["", "", ""]
+    for char in phrase:
+        glyph = FONT.get(char, FONT[" "])
+        for index in range(3):
+            rows[index] += glyph[index] + " "
+    return rows
+
+
+def heading(width: int) -> int:
+    """Print the wordmark and the description. Returns the last line used."""
+    import textwrap
+    print("\033[1;36m" + BANNER + "\033[0m", end="")
+    print("           verifiable receipts for what an agent did")
+    print("           zkagent 0.4.0 · format 3 · 7,442 constraints · proof ≈2.3 kB")
+    print()
+    print("\033[36m" + "\n".join("  " + row.rstrip() for row in small_art("VERIFIABLE RECEIPTS")) + "\033[0m")
+    print()
+    lines = textwrap.wrap(BLURB, width=max(40, width - 4))
+    for line in lines:
+        print("\033[2m  " + line + "\033[0m")
+    print()
+    return 7 + 2 + 1 + 3 + 1 + len(lines) + 1
+
+
 
 
 def head(text: str) -> None:
@@ -61,9 +114,16 @@ def main() -> int:
     if delay:
         time.sleep(delay)
 
-    print("\033[1mzkagent\033[0m  raw tool output, as an operator sees it")
-    print(f"  binary  {binary}")
-    print(subprocess.run([binary, "version"], capture_output=True, text=True, check=False).stdout.strip())
+    import shutil
+
+    width, height = shutil.get_terminal_size((80, 50))
+    used = heading(width)
+    top = used + 1
+    if height > top + 4:
+        print(f"\033[{top};{height}r\033[{top};1H", end="", flush=True)
+
+    print(f"\033[2m  binary {binary}\033[0m")
+    print("  " + subprocess.run([binary, "version"], capture_output=True, text=True, check=False).stdout.strip())
 
     head("1. the agent works")
     for name, args in (
@@ -75,7 +135,7 @@ def main() -> int:
     ):
         module._record(name, args)
         print(f"  {name:<14} recorded")
-        time.sleep(0.5)
+        time.sleep(0.8)
 
     head("2. status")
     dump(json.loads(tools["zkagent_status"]({})), ("pending_actions", "runs", "slots_per_receipt"))
