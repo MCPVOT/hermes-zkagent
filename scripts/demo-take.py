@@ -51,7 +51,17 @@ def main() -> int:
 
     module.register(Ctx())
 
-    print("\033[1mzkagent-attest\033[0m  — verifiable receipts for what an agent did")
+    banner = r"""
+   ███████╗██╗  ██╗ █████╗  ██████╗ ███████╗███╗   ██╗████████╗
+   ╚══███╔╝██║ ██╔╝██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝
+     ███╔╝ █████╔╝ ███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║
+    ███╔╝  ██╔═██╗ ██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║
+   ███████╗██║  ██╗██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║
+   ╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝
+"""
+    print("\\033[1;36m" + banner + "\\033[0m", end="")
+    print("\\033[1m           verifiable receipts for what an agent did\\033[0m")
+    print("\\033[2m           zkagent 0.3.1 · format 3 · 7,442 constraints · proof 2,326 B\\033[0m")
     print()
     print("  press Enter to start the demo (it runs for about 20 seconds)")
     try:
