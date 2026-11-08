@@ -5,7 +5,7 @@ One take, five beats, no editing. Everything below is runnable on this machine.
 ## Pre-flight (before recording)
 
 ```bash
-python3 scripts/install-zkagent.py                 # pins v0.3.1+2026-11-05, verifies sha256
+python3 scripts/install-zkagent.py                 # pins v0.4.0+2026-11-08, verifies sha256
 hermes plugins list | grep zkagent-attest          # must say enabled
 rm -f "$HERMES_HOME/plugin-data/zkagent-attest/state.json" \
       "$HERMES_HOME/plugin-data/zkagent-attest/pending.jsonl" \

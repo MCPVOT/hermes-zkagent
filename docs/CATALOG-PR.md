@@ -145,7 +145,7 @@ above the four verdicts.
 
 ## Checklist
 
-- [x] Pinned at the commit that contains the replay fix (0.5.2)
+- [x] Pinned at the commit that contains the replay, cap and guard fixes (0.5.5)
 - [x] Plugin manifest validates (`hermes plugins validate . --install-deps`)
 - [x] No bundled executables
 - [x] No core override
