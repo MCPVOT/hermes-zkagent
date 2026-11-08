@@ -20,9 +20,16 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 PAUSE = 2.6
 
 
+ZMARK = ("▀▀█ █ █", "▄▀  █▀▄", "▀▀▀ ▀ ▀")
+
+
 def beat(title: str) -> None:
+    """Every beat carries the ZK mark, so the ASCII stays on screen as the log grows."""
     print()
-    print("\033[1;36m▸ " + title + "\033[0m")
+    for index, row in enumerate(ZMARK):
+        suffix = "  \033[1m" + title + "\033[0m" if index == 1 else ""
+        print("\033[36m" + row + "\033[0m" + suffix)
+    print()
     time.sleep(PAUSE)
 
 
@@ -180,7 +187,8 @@ def main() -> int:
     time.sleep(PAUSE)
 
     print()
-    print("\033[1mTotals are public. Actions are not. A tampered proof fails.\033[0m")
+    print("\033[1;36m" + banner + "\033[0m", end="")
+    print("\033[1m           Totals are public. Actions are not. A tampered proof fails.\033[0m")
     print()
     print("[demo complete — press Enter to close]")
     try:
