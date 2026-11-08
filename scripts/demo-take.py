@@ -17,7 +17,7 @@ import tempfile
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-PAUSE = 1.4
+PAUSE = 2.6
 
 
 def beat(title: str) -> None:
@@ -63,7 +63,7 @@ def main() -> int:
     print("\033[1m           verifiable receipts for what an agent did\033[0m")
     print("\033[2m           zkagent 0.3.1 · format 3 · 7,442 constraints · proof 2,326 B\033[0m")
     print()
-    print("  press Enter to start the demo (it runs for about 20 seconds)")
+    print("  press Enter to start the demo (it runs for about 45 seconds)")
     try:
         input()
     except EOFError:
@@ -81,7 +81,7 @@ def main() -> int:
     ):
         module._record(name, args)
         print(f"    {name:<14} recorded")
-        time.sleep(0.45)
+        time.sleep(0.9)
 
     beat("nobody asked the plugin to count them")
     show(json.loads(tools["zkagent_status"]({})), ("pending_actions", "runs"))
@@ -89,10 +89,18 @@ def main() -> int:
     beat("sign a cap and prove the session stayed inside it")
     attest = json.loads(tools["zkagent_attest"]({"max_amount": 20}))
     show(attest, ("verdict", "actions", "total", "cap"))
+    receipt_path = pathlib.Path(attest["receipt"])
+    receipt = json.loads(receipt_path.read_text())
+    print(f"    {'receipt':<16} total {receipt['total_amount']} · {receipt['action_count']} actions "
+          f"· execution {receipt['execution_id']}")
+    print(f"    {'trace_root':<16} {receipt['trace_root'][:32]}…")
+    print(f"    {'proof':<16} {pathlib.Path(attest['proof']).stat().st_size:,} bytes")
     time.sleep(PAUSE)
 
     beat("verify the artifact, not the memory")
     show(json.loads(tools["zkagent_verify"]({})), ("verdict", "execution_id"))
+    print("    the verifier saw 16 public inputs and no actions")
+    time.sleep(PAUSE)
 
     beat("one byte changed in the proof")
     run_dir = pathlib.Path(attest["proof"]).parent
@@ -137,7 +145,9 @@ def main() -> int:
     time.sleep(PAUSE)
 
     beat("reveal exactly one action")
-    show(json.loads(tools["zkagent_disclose"]({"index": 2})), ("index", "recorded_tool"))
+    show(json.loads(tools["zkagent_disclose"]({"index": 2})), ("index", "digest", "verified"))
+    print("    the other four actions were not revealed")
+    time.sleep(PAUSE)
 
     print()
     print("\033[1mTotals are public. Actions are not. A tampered proof fails.\033[0m")
