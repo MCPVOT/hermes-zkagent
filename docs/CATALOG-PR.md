@@ -104,7 +104,10 @@ recorded calls, `accept · actions 5 · total 9 · cap 20`, verify accept, one b
 changed in the proof -> `REJECT` with exit 1 and `public_input_mismatch`, then
 one action disclosed while four stay hidden.
 
-Screenshots: `01-banner.png`, `02-accept.png`, `03-reject.png`, `04-disclose.png`.
+![zkagent-attest demo](https://raw.githubusercontent.com/MCPVOT/hermes-zkagent/master/docs/assets/demo-final.png)
+
+The closing frame of that run: every beat carries the ZK mark, and the wordmark sits
+above the four verdicts.
 
 ## Checklist
 
