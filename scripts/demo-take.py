@@ -63,6 +63,21 @@ def main() -> int:
     print("\033[1m           verifiable receipts for what an agent did\033[0m")
     print("\033[2m           zkagent 0.3.1 · format 3 · 7,442 constraints · proof 2,326 B\033[0m")
     print()
+    import textwrap
+
+    blurb = (
+        "An agent acts on your behalf: it calls tools, spends budget, touches your data. "
+        "Today the only account of that is the agent's own transcript. zkagent turns the "
+        "session into a receipt you can check: the totals, the action count and a policy cap "
+        "you signed, proved in zero knowledge, so a verifier learns the session stayed inside "
+        "the limits without seeing a single action. In Hermes that gives every plugin, MCP "
+        "server and client a shared answer to \"did this agent do what it was allowed to do\" "
+        "without publishing prompts, arguments or customer data."
+    )
+    for line in textwrap.wrap(blurb, width=88):
+        print("\033[2m  " + line + "\033[0m")
+        time.sleep(0.18)
+    print()
     print("  press Enter to start the demo (it runs for about 45 seconds)")
     try:
         input()
