@@ -25,6 +25,14 @@ you reveal exactly one, with the Merkle path that places it in the attested set.
 
 ## One picture
 
+<picture>
+  <source media="(max-width: 600px)" srcset="assets/infographic-portrait.png">
+  <img src="assets/infographic.png" alt="record → attest → verify → disclose, with a tampered proof rejected">
+</picture>
+
+Four steps, and the branch that matters: a single changed byte turns `accept` into `reject` with
+`public_input_mismatch` and exit 1. The portrait version is what renders on a phone.
+
 <img src="assets/infographic.png" alt="record → attest → verify → disclose, with a tampered proof rejected" width="100%">
 
 Four steps, and the branch that matters: a single changed byte turns `accept` into `reject` with
