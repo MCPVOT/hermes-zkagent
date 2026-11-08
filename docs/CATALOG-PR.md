@@ -99,7 +99,9 @@ learn them:
 
 ## Demo
 
-49 seconds, recorded on the pinned release, no audio needed: banner, five
+24 seconds, recorded on the pinned release, no audio needed: https://x.com/MCPVOT/status/2119241113760649642
+
+It shows, in order: banner, five
 recorded calls, `accept · actions 5 · total 9 · cap 20`, verify accept, one byte
 changed in the proof -> `REJECT` with exit 1 and `public_input_mismatch`, then
 one action disclosed while four stay hidden.
@@ -118,4 +120,4 @@ above the four verdicts.
 - [x] MIT licensed
 - [x] Security audit published
 - [x] Disclosures restated in this description
-- [ ] Demo video link (posted to X, tagged @NousResearch)
+- [x] Demo video: https://x.com/MCPVOT/status/2119241113760649642
