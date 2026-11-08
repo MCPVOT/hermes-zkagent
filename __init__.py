@@ -818,6 +818,20 @@ def _seen_records(kind: str) -> dict:
     return dict(section) if isinstance(section, Mapping) else {}
 
 
+def _claimed_execution_ids() -> dict[str, str]:
+    """Every execution id already accepted, mapped to how it was claimed.
+
+    The seen ledger keeps two sections, and the same evidence must not be accepted twice by
+    taking one road and then the other: a session covers its executions, so verifying one of
+    them alone afterwards is a replay, and so is the reverse order.
+    """
+    claimed = {str(key): "receipt" for key in _seen_records("executions")}
+    for root, record in _seen_records("sessions").items():
+        for execution_id in record.get("executions") or []:
+            claimed.setdefault(str(execution_id), str(root))
+    return claimed
+
+
 def _record_acceptance(kind: str, key: str, record: Mapping[str, Any]) -> tuple[bool, str | None]:
     """Add one acceptance to seen.json, atomically. Returns (recorded, error)."""
     seen = _load_seen()
@@ -1251,18 +1265,21 @@ def _verify_one(binary: str, runs: Sequence[Mapping[str, Any]], report: Mapping[
     if not run:
         return _json({**payload, "ok": False, "error": f"no attestation with execution_id {run_id}"})
 
+    claim = _claimed_execution_ids().get(str(run_id))
     record = _seen_records("executions").get(str(run_id))
-    if record:
+    if claim:
+        covered = claim != "receipt"
         return _json(
             {
                 **payload,
                 "ok": False,
                 "verdict": "replay",
-                "reason": "already_accepted",
+                "reason": "already_accepted_in_session" if covered else "already_accepted",
                 "execution_id": run_id,
                 "replayed": True,
-                "accepted_at": record.get("accepted_at"),
-                "error": _refusal("executions", str(run_id), record),
+                "covered_by": claim if covered else None,
+                "accepted_at": (record or {}).get("accepted_at"),
+                "error": _refusal("executions", str(run_id), record or {}),
             }
         )
 
@@ -1348,6 +1365,27 @@ def _verify_session(binary: str, report: Mapping[str, Any], payload: dict, param
                 "replayed": True,
                 "accepted_at": record.get("accepted_at"),
                 "error": _refusal("sessions", root, record),
+            }
+        )
+
+    claimed = _claimed_execution_ids()
+    overlapping = [
+        int(entry["execution_id"])
+        for entry in report.get("entries") or []
+        if str(entry["execution_id"]) in claimed
+    ]
+    if overlapping:
+        return _json(
+            {
+                **payload,
+                "ok": False,
+                "verdict": "replay",
+                "reason": "execution_already_accepted",
+                "root": root,
+                "replayed": True,
+                "executions": overlapping,
+                "error": f"execution id(s) {overlapping} were already accepted on their own, so accepting "
+                "the session would count the same evidence twice.",
             }
         )
 

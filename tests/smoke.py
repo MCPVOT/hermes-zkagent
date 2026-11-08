@@ -198,7 +198,16 @@ def main() -> int:
     print("index    : tampered total refused |", broken["verdict"], "|",
           next(p for p in broken["session"]["problems"] if "session total" in p)[:70])
 
-    # --- the aggregate: every receipt accepts, roots match, total adds up -----------------
+    # --- cross-mode: an execution accepted on its own blocks the aggregate ------------------
+    # Same evidence, second road. The seen ledger is one namespace: a session covers its
+    # executions, so accepting both would count the same work twice.
+    blocked = json.loads(ctx.tools["zkagent_verify"]({"session": True}))
+    assert blocked.get("ok") is False and blocked.get("verdict") == "replay", blocked
+    assert blocked.get("reason") == "execution_already_accepted", blocked
+    print("session  : aggregate refused after a receipt was accepted |", blocked["reason"])
+
+    # --- the aggregate on its own: every receipt accepts, roots match, total adds up --------
+    module._seen_path().unlink(missing_ok=True)
     aggregate = json.loads(ctx.tools["zkagent_verify"]({"session": True}))
     assert aggregate.get("verdict") == "accept", aggregate
     assert aggregate["root"] == index["root"], aggregate
