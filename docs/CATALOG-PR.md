@@ -56,6 +56,15 @@ Platforms: Linux x86_64, macOS aarch64, Windows x86_64.
 - **No bundled executables.** The catalog artifact is Python source only.
 - **No core override.** Nothing in Hermes is patched or monkey-patched.
 
+## Replay protection covers both modes
+
+The seen ledger records what has been accepted. An execution id claimed by verifying a single
+receipt now blocks the aggregate, and an execution covered by an accepted session blocks a
+later single verify, with `reason_code` `execution_already_accepted` and
+`already_accepted_in_session` respectively. Two guard tests pin both orders, because the
+first version of this plugin accepted the same work once as a receipt and again inside its
+session.
+
 ## Evidence
 
 - Security audit with 15 findings and their evidence:
@@ -113,6 +122,7 @@ above the four verdicts.
 
 ## Checklist
 
+- [x] Pinned at the commit that contains the replay fix (0.5.2)
 - [x] Plugin manifest validates (`hermes plugins validate . --install-deps`)
 - [x] No bundled executables
 - [x] No core override
