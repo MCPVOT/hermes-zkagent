@@ -92,10 +92,11 @@ def main() -> int:
         time.sleep(0.18)
     print()
     print("  press Enter to start the demo (it runs for about 45 seconds)")
-    try:
-        input()
-    except EOFError:
-        pass
+    if os.environ.get("DEMO_AUTOSTART") != "1":
+        try:
+            input()
+        except EOFError:
+            pass
     print("\033[2J\033[H", end="")
     time.sleep(PAUSE)
 
