@@ -23,14 +23,14 @@ import sys
 import urllib.request
 from pathlib import Path
 
-VERSION = "v0.3.1+2026-11-05"
+VERSION = "v0.4.0+2026-11-08"
 REPO = "MCPVOT/zkagent"
 
 # name -> sha256, from the release's SHA256SUMS
 ASSETS = {
-    "linux-x86_64": ("zkagent-linux-x86_64", "7cc37d8ee5f7d2a1ff444834c9966c7cf091a1d09eba34985b329372a4a31e97"),
-    "macos-aarch64": ("zkagent-macos-aarch64", "e7d6aef2f6d995d332862e88fe4ecb04ff5aacfb8ae85860d5cb02c78b5874c1"),
-    "windows-x86_64": ("zkagent-windows-x86_64.exe", "6319a1904c60fb34ee62d2c368bc8fcc394ece18ab815237e166a592650e61d9"),
+    "linux-x86_64": ("zkagent-linux-x86_64", "c678fa1a1b8462d1954c8797fb235630ccbc90fa2300720606b52b895eda4e81"),
+    "macos-aarch64": ("zkagent-macos-aarch64", "0bfd895f690319209cecde196fe93d089da442c58ffe46af243a51d06b1154fb"),
+    "windows-x86_64": ("zkagent-windows-x86_64.exe", "6cf8106be6ad76926c9c8559666790defa6de7c27a80e0b6f61a32eaf9c62f44"),
 }
 
 
