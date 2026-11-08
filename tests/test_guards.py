@@ -271,5 +271,51 @@ class TestCapWidening(GuardCase):
         self.assertEqual(run["cap_relaxed"], {"from": 2, "to": 20}, run)
 
 
+class TestGuardBinding(GuardCase):
+    """A guard that can be deleted is not a guard."""
+
+    def test_a_deleted_ledger_is_detected(self):
+        self.attest_accept()
+        stub_run(self.m, verify_exit=0, verify_body={"verdict": "accept", "reason": None})
+        self.assertEqual(json.loads(self.m.tool_verify({}))["verdict"], "accept")
+        self.assertIsNotNone(self.m._load_state().get("guard"), "acceptance must bind the header")
+        self.m._seen_path().unlink()
+        out = json.loads(self.m.tool_verify({}))
+        self.assertFalse(out["ok"], out)
+        self.assertEqual(out["verdict"], "reject", out)
+        self.assertEqual(out["reason"], "replay_guard_lost", out)
+
+    def test_an_edited_ledger_is_detected(self):
+        self.attest_accept()
+        stub_run(self.m, verify_exit=0, verify_body={"verdict": "accept", "reason": None})
+        json.loads(self.m.tool_verify({}))
+        seen = json.loads(self.m._seen_path().read_text())
+        seen["executions"] = {}
+        self.m._seen_path().write_text(json.dumps(seen))
+        out = json.loads(self.m.tool_verify({}))
+        self.assertEqual(out["reason"], "replay_guard_lost", out)
+
+
+class TestCorruptState(GuardCase):
+    """Damage must be reported, never mistaken for a fresh session."""
+
+    def test_unreadable_state_is_a_refusal(self):
+        self.attest_accept()
+        self.m._state_path().write_text("{oops")
+        out = json.loads(self.m.tool_verify({}))
+        self.assertFalse(out["ok"], out)
+        self.assertEqual(out["verdict"], "reject", out)
+        self.assertEqual(out["reason"], "state_unreadable", out)
+        status = json.loads(self.m.tool_status({}))
+        self.assertEqual(status["reason"], "state_unreadable", status)
+
+    def test_unreadable_session_index_is_a_refusal(self):
+        self.attest_accept()
+        self.m._session_path().write_text("{not json")
+        out = json.loads(self.m.tool_verify({"session": True}))
+        self.assertFalse(out["ok"], out)
+        self.assertEqual(out["verdict"], "session_mismatch", out)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
