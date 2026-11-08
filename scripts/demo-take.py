@@ -1,7 +1,7 @@
-"""Play the demo once, slowly, in a terminal you can record.
+"""Play the demo once, with the wordmark and the description pinned to the top.
 
-Real tools, real binary, real verdicts. The pauses exist so a camera can follow them;
-nothing here prints a line it did not get from the code.
+The heading is printed once and a scroll region is set below it, so every beat appears
+under a heading that never scrolls away. Real tools, real binary, real verdicts.
 
     ZKAGENT_BIN=~/.local/bin/zkagent python3 scripts/demo-take.py
 """
@@ -12,24 +12,56 @@ import importlib.util
 import json
 import os
 import pathlib
+import shutil
+import subprocess
 import sys
 import tempfile
+import textwrap
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PAUSE = 2.6
 
+FONT = {
+    "V": ("█ █", "█ █", " ▀ "), "E": ("█▀▀", "█▀ ", "▀▀▀"), "R": ("█▀▄", "█▀▄", "▀ ▀"),
+    "I": ("▀█▀", " █ ", "▀▀▀"), "F": ("█▀▀", "█▀ ", "▀  "), "A": ("▄▀▄", "█▀█", "▀ ▀"),
+    "B": ("█▀▄", "█▀▄", "▀▀ "), "L": ("█  ", "█  ", "▀▀▀"), "C": ("█▀▀", "█  ", "▀▀▀"),
+    "P": ("█▀▄", "█▀ ", "▀  "), "T": ("▀█▀", " █ ", " ▀ "), "S": ("█▀▀", "▀▀█", "▀▀▀"),
+    " ": ("   ", "   ", "   "),
+}
 
-ZMARK = ("▀▀█ █ █", "▄▀  █▀▄", "▀▀▀ ▀ ▀")
+BANNER = r"""
+   ███████╗██╗  ██╗ █████╗  ██████╗ ███████╗███╗   ██╗████████╗
+   ╚══███╔╝██║ ██╔╝██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝
+     ███╔╝ █████╔╝ ███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║
+    ███╔╝  ██╔═██╗ ██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║
+   ███████╗██║  ██╗██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║
+   ╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝
+"""
+
+BLURB = (
+    "An agent acts on your behalf: it calls tools, spends budget, touches your data. Today "
+    "the only account of that is the agent's own transcript. zkagent turns the session into "
+    "a receipt you can check: the totals, the action count and a policy cap you signed, "
+    "proved in zero knowledge, so a verifier learns the session stayed inside the limits "
+    "without seeing a single action. In Hermes that gives every plugin, MCP server and client "
+    "a shared answer to \"did this agent do what it was allowed to do\" without publishing "
+    "prompts, arguments or customer data."
+)
+
+
+def small_art(phrase: str) -> list[str]:
+    rows = ["", "", ""]
+    for char in phrase:
+        glyph = FONT.get(char, FONT[" "])
+        for index in range(3):
+            rows[index] += glyph[index] + " "
+    return rows
 
 
 def beat(title: str) -> None:
-    """Every beat carries the ZK mark, so the ASCII stays on screen as the log grows."""
     print()
-    for index, row in enumerate(ZMARK):
-        suffix = "  \033[1m" + title + "\033[0m" if index == 1 else ""
-        print("\033[36m" + row + "\033[0m" + suffix)
-    print()
+    print("\033[1;36m▸ " + title + "\033[0m")
     time.sleep(PAUSE)
 
 
@@ -40,7 +72,19 @@ def show(payload: dict, keys: tuple[str, ...]) -> None:
     time.sleep(PAUSE)
 
 
-FONT = {'V': ('█ █', '█ █', ' ▀ '), 'E': ('█▀▀', '█▀ ', '▀▀▀'), 'R': ('█▀▄', '█▀▄', '▀ ▀'), 'I': ('▀█▀', ' █ ', '▀▀▀'), 'F': ('█▀▀', '█▀ ', '▀  '), 'A': ('▄▀▄', '█▀█', '▀ ▀'), 'B': ('█▀▄', '█▀▄', '▀▀ '), 'L': ('█  ', '█  ', '▀▀▀'), 'C': ('█▀▀', '█  ', '▀▀▀'), 'P': ('█▀▄', '█▀ ', '▀  '), 'T': ('▀█▀', ' █ ', ' ▀ '), 'S': ('█▀▀', '▀▀█', '▀▀▀'), ' ': ('   ', '   ', '   ')}
+def print_heading(width: int) -> int:
+    """Print the wordmark and the description. Returns the last line used."""
+    print("\033[1;36m" + BANNER + "\033[0m", end="")
+    print("           verifiable receipts for what an agent did")
+    print("           zkagent 0.4.0 · format 3 · 7,442 constraints · proof ≈2.3 kB")
+    print()
+    print("\033[36m" + "\n".join("  " + row.rstrip() for row in small_art("VERIFIABLE RECEIPTS")) + "\033[0m")
+    print()
+    lines = textwrap.wrap(BLURB, width=min(width - 4, 88))
+    for line in lines:
+        print("\033[2m  " + line + "\033[0m")
+    print()
+    return 7 + 2 + 1 + 3 + 1 + len(lines) + 1
 
 
 def main() -> int:
@@ -50,7 +94,7 @@ def main() -> int:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    tools: dict[str, object] = {}
+    tools: dict = {}
 
     class Ctx:
         def register_tool(self, name, **kw):
@@ -61,51 +105,12 @@ def main() -> int:
 
     module.register(Ctx())
 
-    banner = r"""
-   ███████╗██╗  ██╗ █████╗  ██████╗ ███████╗███╗   ██╗████████╗
-   ╚══███╔╝██║ ██╔╝██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝
-     ███╔╝ █████╔╝ ███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║
-    ███╔╝  ██╔═██╗ ██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║
-   ███████╗██║  ██╗██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║
-   ╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝
-"""
-    print("\033[1;36m" + banner + "\033[0m", end="")
-    print("\033[1m           verifiable receipts for what an agent did\033[0m")
-    print("\033[2m           zkagent 0.4.0 · format 3 · 7,442 constraints · proof ≈2.3 kB\033[0m")
-    print()
-    import textwrap
+    width, height = shutil.get_terminal_size((100, 44))
+    used = print_heading(width)
 
-    phrase = "VERIFIABLE RECEIPTS"
-    rows = ["", "", ""]
-    for ch in phrase:
-        glyph = FONT.get(ch, FONT[" "])
-        for i in range(3):
-            rows[i] += glyph[i] + " "
-    print("\033[36m" + "\n".join("  " + row.rstrip() for row in rows) + "\033[0m")
-    print()
-    time.sleep(PAUSE)
-
-    blurb = (
-        "An agent acts on your behalf: it calls tools, spends budget, touches your data. "
-        "Today the only account of that is the agent's own transcript. zkagent turns the "
-        "session into a receipt you can check: the totals, the action count and a policy cap "
-        "you signed, proved in zero knowledge, so a verifier learns the session stayed inside "
-        "the limits without seeing a single action. In Hermes that gives every plugin, MCP "
-        "server and client a shared answer to \"did this agent do what it was allowed to do\" "
-        "without publishing prompts, arguments or customer data."
-    )
-    for line in textwrap.wrap(blurb, width=88):
-        print("\033[2m  " + line + "\033[0m")
-        time.sleep(0.18)
-    print()
-    print("  press Enter to start the demo (it runs for about 45 seconds)")
-    if os.environ.get("DEMO_AUTOSTART") != "1":
-        try:
-            input()
-        except EOFError:
-            pass
-    print("\033[2J\033[H", end="")
-    time.sleep(PAUSE)
+    top = used + 1
+    if height > top + 3:
+        print(f"\033[{top};{height}r\033[{top};1H", end="", flush=True)
 
     beat("the agent works: five tool calls")
     for name, args in (
@@ -125,8 +130,8 @@ def main() -> int:
     beat("sign a cap and prove the session stayed inside it")
     attest = json.loads(tools["zkagent_attest"]({"max_amount": 20}))
     show(attest, ("verdict", "actions", "total", "cap"))
-    receipt_path = pathlib.Path(attest["receipt"])
-    receipt = json.loads(receipt_path.read_text())
+    run_dir = pathlib.Path(attest["proof"]).parent
+    receipt = json.loads((run_dir / "receipt.json").read_text())
     print(f"    {'receipt':<16} total {receipt['total_amount']} · {receipt['action_count']} actions "
           f"· execution {receipt['execution_id']}")
     print(f"    {'trace_root':<16} {receipt['trace_root'][:32]}…")
@@ -139,7 +144,6 @@ def main() -> int:
     time.sleep(PAUSE)
 
     beat("one byte changed in the proof")
-    run_dir = pathlib.Path(attest["proof"]).parent
     tampered = json.loads((run_dir / "proof.json").read_text())
 
     def flip(node) -> bool:
@@ -159,11 +163,8 @@ def main() -> int:
                     return True
         return False
 
-    changed = flip(tampered)
-    print(f"    tampered           {changed}")
+    print(f"    tampered           {flip(tampered)}")
     (run_dir / "proof-tampered.json").write_text(json.dumps(tampered))
-    import subprocess
-
     run = subprocess.run(
         [os.environ["ZKAGENT_BIN"], "--json", "verify", "--keys", str(module._keys_dir()),
          "--policy", str(run_dir / "policy.json"), "--receipt", str(run_dir / "receipt.json"),
@@ -182,14 +183,11 @@ def main() -> int:
 
     beat("reveal exactly one action")
     revealed = json.loads(tools["zkagent_disclose"]({"index": 2}))
-    show(revealed, ("index", "recorded_tool", "digest"))
+    show(revealed, ("index", "recorded_tool"))
     print("    the other four actions were not revealed")
     time.sleep(PAUSE)
 
-    print()
-    print("\033[1;36m" + banner + "\033[0m", end="")
-    print("\033[1m           verifiable receipts for what an agent did\033[0m")
-    print()
+    beat("summary")
     print("\033[1m  accept    " + f"{attest['actions']} actions · total {attest['total']} · cap {attest['cap']}" + "\033[0m")
     print("\033[1m  accept    verify · execution " + str(attest.get("execution_id", "-")) + "\033[0m")
     print("\033[1m  reject    tamper · exit " + str(run.returncode) + " · public_input_mismatch\033[0m")
