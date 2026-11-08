@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="zkagent">
+  <title>zkagent</title>
+  <rect width="512" height="512" rx="112" fill="#0B0F14"/>
+  <rect x="8" y="8" width="496" height="496" rx="104" fill="none" stroke="#1F2937" stroke-width="4"/>
+<g fill="#22D3EE">
+        <rect x="71" y="127" width="170" height="34"/>
+    <rect x="207" y="161" width="34" height="34"/>
+    <rect x="173" y="195" width="34" height="34"/>
+    <rect x="139" y="229" width="34" height="34"/>
+    <rect x="105" y="263" width="34" height="34"/>
+    <rect x="105" y="297" width="34" height="34"/>
+    <rect x="71" y="331" width="170" height="34"/>
+        <rect x="271" y="127" width="34" height="238"/>
+    <rect x="407" y="127" width="34" height="34"/>
+    <rect x="373" y="161" width="34" height="34"/>
+    <rect x="339" y="195" width="34" height="34"/>
+    <rect x="305" y="229" width="34" height="68"/>
+    <rect x="339" y="297" width="34" height="34"/>
+    <rect x="373" y="331" width="34" height="34"/>
+  </g>
+  <!-- the attested line: a receipt edge, the only ornament -->
+<g fill="#0EA5E9" opacity="0.85">
+    <rect x="71" y="391" width="370" height="8" rx="4"/>
+  </g>
+<g fill="#0EA5E9" opacity="0.35">
+    <rect x="167" y="417" width="178" height="8" rx="4"/>
+  </g>
+</svg>

@@ -1,5 +1,7 @@
 # zkagent-attest
 
+<img src="docs/assets/icon/zkagent-128.png" alt="zkagent-attest" width="72" align="right">
+
 **Your agent's transcript is a claim. This plugin turns it into a receipt a third party can check.**
 
 [![gates](https://github.com/MCPVOT/hermes-zkagent/actions/workflows/check.yml/badge.svg)](https://github.com/MCPVOT/hermes-zkagent/actions/workflows/check.yml)
