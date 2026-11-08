@@ -231,5 +231,45 @@ class TestCrossModeReplay(GuardCase):
         self.assertEqual(alone["reason"], "already_accepted_in_session", alone)
 
 
+class TestCapWidening(GuardCase):
+    """A refusal that a bigger number erases was never a refusal."""
+
+    def stub(self):
+        # policy/prove/verify all succeed; the cap gate is what the test is about
+        stub_run(self.m, verify_exit=0, verify_body={"verdict": "accept", "reason": None})
+
+    def test_a_refusal_is_recorded_with_its_cap(self):
+        self.record()
+        self.stub()
+        out = json.loads(self.m.tool_attest({"max_amount": 2}))
+        self.assertFalse(out["ok"], out)
+        self.assertEqual(out["reason"], "cap_exceeded", out)
+        history = self.m._load_state().get("cap_refusals") or []
+        self.assertEqual(len(history), 1, history)
+        self.assertEqual(history[0]["cap"], 2)
+
+    def test_widening_the_cap_after_a_refusal_is_refused(self):
+        self.record()
+        self.stub()
+        json.loads(self.m.tool_attest({"max_amount": 2}))
+        out = json.loads(self.m.tool_attest({"max_amount": 20}))
+        self.assertFalse(out["ok"], out)
+        self.assertEqual(out["verdict"], "reject", out)
+        self.assertEqual(out["reason"], "cap_widened_after_refusal", out)
+        self.assertEqual(out["refused_cap"], 2, out)
+        self.assertEqual(len(self.m._read_rows()), 3, "a refusal must not consume the ledger")
+
+    def test_a_deliberate_widening_is_accepted_and_recorded(self):
+        self.record()
+        self.stub()
+        json.loads(self.m.tool_attest({"max_amount": 2}))
+        out = json.loads(self.m.tool_attest({"max_amount": 20, "allow_cap_increase": True}))
+        self.assertTrue(out["ok"], out)
+        self.assertEqual(out["verdict"], "accept", out)
+        self.assertEqual(out["cap_relaxed"], {"from": 2, "to": 20}, out)
+        run = self.m._load_state()["runs"][-1]
+        self.assertEqual(run["cap_relaxed"], {"from": 2, "to": 20}, run)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

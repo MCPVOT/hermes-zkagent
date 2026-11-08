@@ -846,6 +846,38 @@ def _record_acceptance(kind: str, key: str, record: Mapping[str, Any]) -> tuple[
     return True, None
 
 
+CAP_REFUSALS = "cap_refusals"
+
+
+def _batch_fingerprint(batch: Sequence[Mapping[str, Any]]) -> str:
+    """Stable identity for a batch: the slots that would be proved, in order.
+
+    Changes when the actions change, so a later, different batch is not judged by an earlier
+    refusal. Amounts are included: the same tools with a larger cost is different evidence.
+    """
+    material = "|".join(f"{a['target']}:{a['tool']}:{a['amount']}" for a in batch)
+    return hashlib.sha256(material.encode()).hexdigest()
+
+
+def _remember_refusal(state: dict, fingerprint: str, cap: int, total: int) -> None:
+    history = state.get(CAP_REFUSALS)
+    if not isinstance(history, list):
+        history = []
+    history.append({"batch": fingerprint, "cap": cap, "total": total, "at": int(time.time())})
+    state[CAP_REFUSALS] = history[-20:]
+    _save_state(state)
+
+
+def _last_refusal(state: dict, fingerprint: str) -> dict | None:
+    history = state.get(CAP_REFUSALS)
+    if not isinstance(history, list):
+        return None
+    for record in reversed(history):
+        if isinstance(record, Mapping) and record.get("batch") == fingerprint:
+            return dict(record)
+    return None
+
+
 def _refusal(kind: str, key: str, record: Mapping[str, Any]) -> str:
     label = "execution_id" if kind == "executions" else "session root"
     source = f" (from {record['receipt']})" if record.get("receipt") else ""
@@ -1010,18 +1042,45 @@ def _tool_attest_unlocked(args: Mapping[str, Any] | None = None) -> str:
             )
         run_id = max(accepted_ids) + 1
 
-    if total > max_amount:
+    fingerprint = _batch_fingerprint(batch)
+    earlier = _last_refusal(state, fingerprint)
+    if earlier and max_amount > int(earlier["cap"]) and not params.get("allow_cap_increase"):
+        # A refusal is supposed to mean something. Without this, an agent that is told "the
+        # total exceeds your cap" simply asks again with a larger cap and the refusal was theatre.
         return _json(
             {
                 "ok": False,
+                "verdict": "reject",
+                "reason": "cap_widened_after_refusal",
+                "error": f"this batch was already refused at cap {earlier['cap']} (total {earlier['total']}). "
+                f"Raising the cap to {max_amount} after the refusal is not a proof that the session stayed "
+                "inside a limit; pass allow_cap_increase: true if the wider cap is a deliberate decision, "
+                "which records the widening on the receipt.",
+                "total": total,
+                "cap": max_amount,
+                "refused_cap": int(earlier["cap"]),
+                "refused_at": earlier.get("at"),
+            }
+        )
+
+    if total > max_amount:
+        _remember_refusal(state, fingerprint, max_amount, total)
+        return _json(
+            {
+                "ok": False,
+                "verdict": "reject",
+                "reason": "cap_exceeded",
                 "error": f"the session total ({total}) exceeds the cap you asked to prove ({max_amount}); "
                          "a proof of a false statement is worse than no proof. Raise max_amount or attest fewer actions.",
                 "total": total,
                 "cap": max_amount,
+                "refused_cap": max_amount,
             }
         )
     if any(int(a["amount"]) > max_per_action for a in batch):
         return _json({"ok": False, "error": f"an action costs more than max_per_action ({max_per_action})"})
+
+    widened_from = int(earlier["cap"]) if earlier and max_amount > int(earlier["cap"]) else None
 
     run_dir = _data_dir() / "runs" / f"run-{run_id}"
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -1152,6 +1211,8 @@ def _tool_attest_unlocked(args: Mapping[str, Any] | None = None) -> str:
         "trace_root": receipt.get("trace_root"),
         "tools": [a["tool"] for a in batch],
     }
+    if widened_from is not None:
+        run["cap_relaxed"] = {"from": widened_from, "to": max_amount}
     state["runs"] = state.get("runs") or []
     state["runs"].append(run)
     state["next_run_id"] = run_id + 1
@@ -1189,6 +1250,7 @@ def _tool_attest_unlocked(args: Mapping[str, Any] | None = None) -> str:
         "receipt": str(receipt_path),
         "proof": str(proof_path),
         "policy": str(policy_path),
+        "cap_relaxed": {"from": widened_from, "to": max_amount} if widened_from is not None else None,
         "session": session_block,
     }
     if session_error:
