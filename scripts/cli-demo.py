@@ -57,6 +57,10 @@ def main() -> int:
 
     module.register(Ctx())
 
+    delay = float(os.environ.get("CLI_DELAY", "0"))
+    if delay:
+        time.sleep(delay)
+
     print("\033[1mzkagent\033[0m  raw tool output, as an operator sees it")
     print(f"  binary  {binary}")
     print(subprocess.run([binary, "version"], capture_output=True, text=True, check=False).stdout.strip())
